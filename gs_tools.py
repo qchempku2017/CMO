@@ -354,28 +354,28 @@ class GSsemigrand(MSONable):
         ce = ClusterExpansion.from_dict(d['cluster_expansion'])
         gs_socket= cls(ce,d['ecis']) 
         #essential terms for initialization
-        if d['maxsupercell']:
+        if 'maxsupercell' in d:
             gs_socket.maxsupercell=d['maxsupercell']
-        if d['num_of_sizes']:
+        if 'num_of_sizes' in d:
             gs_socket.num_of_sizes=d['num_of_sizes']
-        if d['selec']:
+        if 'selec' in d:
             gs_socket.selec = d['selec']
-        if d['ubsolver']:
+        if 'ubsolver' in d:
             gs_socket.ubsolver = d['ubsolver']
-        if d['miu_bars']:
+        if 'miu_bars' in d:
             gs_socket.miu_bars = d['miu_bars']
-        if d['e_lower']:
+        if 'e_lower' in d:
             gs_socket.e_lower=d['e_lower']        
-        if d['lastsupermat']:
+        if 'lastsupermat' in d:
             gs_socket.lastsupermat=d['lastsupermat']
-        if d['e_upper']:
+        if 'e_upper' in d:
             gs_socket.e_upper=d['e_upper']
         #Only lower-bound solver gives a bit ordering
-        if d['str_upper']:
+        if 'str_upper' in d:
             gs_socket.str_upper=d['str_upper']
-        if d['transmat']:
+        if 'transmat' in d:
             gs_socket.transmat=d['transmat']
-        if d['e_lower'] and d['e_upper'] and np.abs(d['e_lower']-d['e_upper'])<=0.001 and gs_socket.str_upper:
+        if ('e_lower' in d) and ('e_upper' in d) and np.abs(d['e_lower']-d['e_upper'])<=0.001 and ('str_upper' in d):
             gs_socket.solved=True
             print("Loaded cluster expansion already has a solved GS. GS energy: %f"%(gs_socket.e_upper))
             print("Under external chemical potential:",gs_socket.miu_bars)
