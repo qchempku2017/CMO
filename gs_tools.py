@@ -142,7 +142,7 @@ class GSsemigrand(MSONable):
 ####
 # Callable interface
 ####
-    def set_transmat(transmat):
+    def set_transmat(self,transmat):
         self.transmat=transmat
         print("Using transformation matrix:",transmat,"after enumeration.")
        
