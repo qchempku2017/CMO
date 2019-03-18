@@ -163,7 +163,8 @@ class GSsemigrand(MSONable):
         """
         if not(self._enumlist):
             _enumlist=[]
-            for size in range(int(self.maxsupercell/num_of_sizes),self.maxsupercell+1,int(self.maxsupercell/num_of_sizes)):
+            for size in range(int(self.maxsupercell/self.num_of_sizes),self.maxsupercell+1,\
+                             int(self.maxsupercell/self,num_of_sizes)):
                 _enumlist.extend(_enumerate_mat(size))
             self._enumlist=random.sample(_enumlist,self.selec)
             if self.transmat: 
