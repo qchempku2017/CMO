@@ -1,0 +1,10 @@
+from pyabinitio.cluster_expansion.ce import ClusterExpansion
+from pymatgen import Structure
+import json as js
+
+d = js.load(open('LMMOF_Dec5_hull.mson'))
+ce = ClusterExpansion.from_dict(d['cluster_expansion'])
+eci = d['ecis']
+str1 = Structure.from_dict(d['structures'][-1])
+cesup1 = ce.supercell_from_structure(str1)
+occu1 = cesup1.occu_from_structure(str1)
