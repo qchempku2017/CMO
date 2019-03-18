@@ -138,6 +138,7 @@ class GSsemigrand(MSONable):
         self.transmat = None
         self.use_ewald = self.ce.use_ewald
         self.use_inv_r = self.ce.use_inv_r
+        self._enumlist = None
     
 ####
 # Callable interface
