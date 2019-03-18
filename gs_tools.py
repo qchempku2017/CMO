@@ -174,7 +174,7 @@ class GSsemigrand(MSONable):
 ####
 # Private tools for the class
 #### 
-    def _iterate_supercells():
+    def _iterate_supercells(self):
         for mat in self.enumlist:
             #Here we will convert problems into MAXSAT and LP standard inputs, solve and analyze the outputs
             print("Solving on supercell matrix:",mat)
@@ -190,7 +190,7 @@ class GSsemigrand(MSONable):
                 return True
         return False
 
-    def _electrostatic_correction(clus_sup):
+    def _electrostatic_correction(self,clus_sup):
         """
             This part generates bit_clusters and ecis to further convert into MAXSAT clauses from a 
         ClusterSupercell object.
@@ -281,7 +281,7 @@ class GSsemigrand(MSONable):
 
         return b_clusters,eci_return,bit_inds
             
-    def _solve_upper(mat,hard_marker=10000):#Warning: hard_marker should be chosen as a big enough number!
+    def _solve_upper(self,mat,hard_marker=10000):#Warning: hard_marker should be chosen as a big enough number!
         #### Input Preparation ####
         cs = self.ce.supercell_from_matrix(mat)
         cs_bits = get_bits(cs)
@@ -339,7 +339,7 @@ class GSsemigrand(MSONable):
         return upper_e,upper_str
 
 
-    def _solve_lower(mat):
+    def _solve_lower(self,mat):
         #### Input Preparation ####
 
         #### Calling Gurobi ####
