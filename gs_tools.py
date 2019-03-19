@@ -4,9 +4,10 @@ import json
 import numpy as np
 import math
 import random
+from operator import mul
 from functools import reduce
 import random
-from itertools import combinations
+from itertools import combinations,permutations
 from pymatgen.analysis.ewald import EwaldSummation
 from pymatgen import Structure,PeriodicSite
 
@@ -89,11 +90,14 @@ def _make_up_twobodies(symops,clusters,eci,cs):
     nbits = np.array([len(b) - 1 for b in bits])
     clusters_new = clusters
     eci_new = {size:[eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in clusters[size]] for size in clusters}
-    last_pair_id = clusters[3][0].sc_b_id -1
-    for pair in combinations(np.arange(len(exp_str)),2):
+    #last_pair_id = clusters[3][0].sc_b_id -1
+    for pair in combinations(list(range(len(exp_str))),2):
+        #print("checking pair",pair)
+        #print([exp_str[site] for site in pair])
         pair_c = Cluster([exp_str[site].frac_coords for site in pair],exp_str.lattice)
         pair_sc = SymmetrizedCluster(pair_c,[np.arange(nbits[i]) for i in pair],symops)
         if pair_sc not in clusters_new[2]:
+            print("Adding sym-cluster:",pair_sc)
             clusters_new[2].append(pair_sc)
             eci_new[2].append([0]*len(pair_sc.bit_combos))
     if cs.use_inv_r:
@@ -164,13 +168,16 @@ class GSsemigrand(MSONable):
         if not(self._enumlist):
             _enumlist=[]
             for size in range(int(self.maxsupercell/self.num_of_sizes),self.maxsupercell+1,\
-                             int(self.maxsupercell/self,num_of_sizes)):
+                             int(self.maxsupercell/self.num_of_sizes)):
+                print("Enumerating for size %d"%size)
                 _enumlist.extend(_enumerate_mat(size))
+            print("Randomly picking supercell matrices.")
             self._enumlist=random.sample(_enumlist,self.selec)
             if self.transmat: 
                 self._enumlist=[_matmul(sc,self.transmat) for sc in self._enumlist]
             self._enumlist=sorted(self._enumlist,key=lambda a:(abs(np.linalg.det(a)),\
                                  np.linalg.norm(a[0]),np.linalg.norm(a[1]),np.linalg.norm(a[2])))
+        print("Enumerated supercells generated!")
         return self._enumlist
 
 ####
@@ -211,7 +218,7 @@ class GSsemigrand(MSONable):
         #Here we find MAXSAT variable indices for all specie on sites.
         bit_inds = []
         b_id = 1
-        for i,site in enumerate(clus_sup_new.supercell):
+        for i,site in enumerate(clus_sup.supercell):
             site_bit_inds = []
             for specie_id in range(len(site.species_and_occu)-1):#-1 since a specie on the site is taken as reference
                 site_bit_inds.append(b_id)
@@ -224,6 +231,8 @@ class GSsemigrand(MSONable):
         bit_clusters = []
         ecis = []
         if self.use_ewald:
+            print("Ewald correction required.")
+            print("Making up all pair interactions.")
             clusters_new, eci_new = _make_up_twobodies(self.ce.symops,self.ce.clusters,self.eci,clus_sup)
             ce_new = ClusterExpansion(structure=self.ce.structure, expansion_structure=self.ce.expansion_structure,\
                      symops=self.ce.symops, clusters= clusters_new,\
@@ -286,7 +295,7 @@ class GSsemigrand(MSONable):
     def _solve_upper(self,mat,hard_marker=10000):#Warning: hard_marker should be chosen as a big enough number!
         #### Input Preparation ####
         cs = self.ce.supercell_from_matrix(mat)
-        cs_bits = get_bits(cs)
+        cs_bits = get_bits(cs.supercell)
         b_clusters_new,ecis_new,site_specie_ids=self._electrostatic_correction(cs)
         soft_cls = []
         hard_cls = []
