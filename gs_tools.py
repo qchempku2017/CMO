@@ -130,6 +130,8 @@ class GSsemigrand(MSONable):
         """
         self.ce = ce
         self.eci = eci
+        self._bclus_corrected = None
+        self._ecis_corrected = None
         self.maxsupercell = maxsupercell
         self.num_of_sizes = num_of_sizes
         self.selec = selec
@@ -179,16 +181,105 @@ class GSsemigrand(MSONable):
                                  np.linalg.norm(a[0]),np.linalg.norm(a[1]),np.linalg.norm(a[2])))
         print("Enumerated supercells generated!")
         return self._enumlist
+    
+    @property
+    def bclus_corrected(self):
+        if (not self._bclus_corrected) and (not self._ecis_corrected):
+            self._bclus_corrected = []
+            self._ecis_corrected = []
+            if self.use_ewald:
+                print("Ewald correction required.")
+                for mat in self.enumlist:
+                    print("Making up all pair interactions.")
+                    clus_sup = self.ce.supercell_from_matrix(mat)
+                    clusters_new, eci_new = _make_up_twobodies(self.ce.symops,self.ce.clusters,self.eci,clus_sup)
+                    ce_new = ClusterExpansion(structure=self.ce.structure, expansion_structure=self.ce.expansion_structure,\
+                                              symops=self.ce.symops, clusters= clusters_new,\
+                                              ltol=self.ce.ltol, stol=self.ce.stol, angle_tol=self.ce.angle_tol,\
+                                              supercell_size=self.ce.supercell_size,\
+                                              use_ewald=self.use_ewald, use_inv_r=self.use_inv_r, eta=self.ce.eta)
+                    clusters_new = ce_new.clusters
+                    clus_sup_new = ce_new.supercell_from_matrix(clus_sup.supercell_matrix)
+                    point_clus_indices = clus_sup_new.cluster_indices[clusters_new[1][0].sc_id:clusters_new[2][0].sc_id]
+                    pair_clus_indices = clus_sup_new.cluster_indices[clusters_new[2][0].sc_id:clusters_new[3][0].sc_id]
+                    ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup_new.supercell])
+                    H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
+                    #Ewald energy E_ew = q*H*q'.
+                    supbits = get_bits(clus_sup_new.supercell)
+                    r = np.array([_GetIonChg(bits[-1]) for bits in supbits])
+                    chg_bits = [[_GetIonChg(bit)-_GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
+                    b_clusters = []
+                    eci_return = []
+
+                    if not self.use_inv_r:
+                        eci_ew = eci_new['ew']
+                        H_r = H*r
+                        #Here we do electro-static correction. Reference zero energy state is the one that all sites are occupied by reference compound. Relative chemical potential of species will also be integrated here.
+                        for sc,sc_inds in clus_sup_new.cluster_indices:
+                            for i,combo in enumerate(sc.bit_combos):
+                                b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)] for sc_ind in sc_inds])
+                                if len(sc.bits)==1:     
+                                    eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
+                                                      eci_ew*(chg_bits[sc_ind[0]][combo[0]]*H_r[sc_ind[0]]+\
+                                                              chg_bits[sc_ind[0]][combo[0]]**2*H[sc_ind[0]][sc_ind[0]]*2)+\
+                                                      (self.miu_bars[sc_ind[0]][combo[0]] if self.miu_bars else 0)\
+                                                      for sc_ind in sc_inds]) 
+                                    #miu_bars is how we introduce chem potential.
+                                elif len(sc.bits)==2:
+                                    eci_return.extend([eci_new[2][sc.sc_id-clusters_new[2][0].sc_id][i]+\
+                                                      eci_ew*chg_bits[sc_ind[0]][combo[0]]*chg_bits[sc_ind[1]][combo[1]]*\
+                                                      H[sc_ind[0]][sc_ind[1]] for sc_ind in sc_inds])
+                                else:
+                                    eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i]\
+                                                      for sc_ind in sc_inds])
+
+                    else:
+                        #When using inv_r, an independent ewald sum is generated for each specie, and they each are fitted into an ECI.
+                        print("I'm still thinking about use_inv_r cases. Not available yet!")
+                        raise NotImplementedError
+
+                    
+                    self._bclus_corrected.append(b_clusters)
+                    self._ecis_corrected.append(eci_return)
+
+            else:
+                for mat in self.enumlist:
+                    ce_new = self.ce
+                    clusters_new = self.ce.clusters
+                    eci_new = {size:[eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in clusters_new[size]] \
+                           for size in clusters_new}
+                    clus_sup_new = self.ce.supercell_from_matrix(mat)
+                    for sc,sc_inds in clus_sup_new.cluster_indices:
+                        for i,combo in enumerate(sc.bit_combos):
+                            b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)] for sc_ind in sc_inds])
+                            if len(sc.bits)==1:     
+                                eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
+                                                  (self.miu_bars[sc_ind[0]][combo[0]] if self.miu_bars else 0)\
+                                                  for sc_ind in sc_inds])
+                            else:
+                                eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i]\
+                                                  for sc_ind in sc_inds])
+
+                    self._bclus_corrected.append(b_clusters)
+                    self._ecis_corrected.append(eci_return)
+
+        return self._bclus_corrected
+
+    @property
+    def ecis_corrected(self):
+        if (not self._ecis_corrected) and (not self._bclus_corrected):
+            bclus_corrected = self.bclus_corrected
+        return self._ecis_corrected
 
 ####
 # Private tools for the class
 #### 
     def _iterate_supercells(self):
-        for mat in self.enumlist:
+        for mat_id,mat in enumerate(self.enumlist):
             #Here we will convert problems into MAXSAT and LP standard inputs, solve and analyze the outputs
             print("Solving on supercell matrix:",mat)
-            cur_e_upper,cur_str_upper=self._solve_upper(mat)
-            cur_e_lower==self._solve_lower(mat)
+            cur_e_upper,cur_str_upper=self._solve_upper(mat_id)
+            cur_e_lower==self._solve_lower(mat_id)
             print("Current GS upper-bound: %f"%cur_e_upper)
             print("Current GS lower_bound: %f"%cur_e_lower)
             if abs(self.e_lower-self.e_upper)<abs(cur_e_lower-cur_e_upper):
@@ -199,7 +290,7 @@ class GSsemigrand(MSONable):
                 return True
         return False
 
-    def _electrostatic_correction(self,clus_sup):
+    def _electrostatic_correction(self,mat_id):
         """
             This part generates bit_clusters and ecis to further convert into MAXSAT clauses from a 
         ClusterSupercell object.
@@ -212,12 +303,14 @@ class GSsemigrand(MSONable):
         and assign an eci to them each as ECI_sc/multiplicity.
             If the self.use_ewald, will add the corresponding ewald matrix element to bit_clusters' ecis. If self.use_inv_r, a list of
         such matrix elements will be added. Finally, will remove the ewald related term(s).
-            clus_sup: the ClusterSupercell object to do eletrostatic correction on.
+            At the beginning of initialization, the self.enumlist and ewald corrections would already have been done. You gotta save a lot of time.
+            mat_id: current supercell matrix id.
             Warning: still a piece of pseudocode!!!!!
         """
         #Here we find MAXSAT variable indices for all specie on sites.
         bit_inds = []
         b_id = 1
+        clus_sup = self.ce.supercell_from_matrix(self.enumlist[mat_id])
         for i,site in enumerate(clus_sup.supercell):
             site_bit_inds = []
             for specie_id in range(len(site.species_and_occu)-1):#-1 since a specie on the site is taken as reference
@@ -228,75 +321,17 @@ class GSsemigrand(MSONable):
 
         #use a new cluster expansion object to store all 2-body interations covered
         #in the supercell
-        bit_clusters = []
-        ecis = []
-        if self.use_ewald:
-            print("Ewald correction required.")
-            print("Making up all pair interactions.")
-            clusters_new, eci_new = _make_up_twobodies(self.ce.symops,self.ce.clusters,self.eci,clus_sup)
-            ce_new = ClusterExpansion(structure=self.ce.structure, expansion_structure=self.ce.expansion_structure,\
-                     symops=self.ce.symops, clusters= clusters_new,\
-                     ltol=self.ce.ltol, stol=self.ce.stol, angle_tol=self.ce.angle_tol, supercell_size=self.ce.supercell_size,\
-                     use_ewald=self.use_ewald, use_inv_r=self.use_inv_r, eta=self.ce.eta)
-            clusters_new = ce_new.clusters
-            clus_sup_new = ce_new.supercell_from_matrix(clus_sup.supercell_matrix)
-            point_clus_indices = clus_sup_new.cluster_indices[clusters_new[1][0].sc_id:clusters_new[2][0].sc_id]
-            pair_clus_indices = clus_sup_new.cluster_indices[clusters_new[2][0].sc_id:clusters_new[3][0].sc_id]
-            ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup_new.supercell])
-            H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
-            #Ewald energy E_ew = q*H*q'.
-            supbits = get_bits(clus_sup_new.supercell)
-            r = np.array([_GetIonChg(bits[-1]) for bits in supbits])
-            chg_bits = [[_GetIonChg(bit)-_GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
-            b_clusters = []
-            eci_return = []
-
-            if not self.use_inv_r:
-                eci_ew = eci_new['ew']
-                H_r = H*r
-                #Here we do electro-static correction. Reference zero energy state is the one that all sites are occupied by reference compound.
-                #Relative chemical potential of species will also be integrated here.
-                for sc,sc_inds in clus_sup_new.cluster_indices:
-                    for i,combo in enumerate(sc.bit_combos):
-                        b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)] for sc_ind in sc_inds])
-                        if len(sc.bits)==1:     
-                            eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+eci_ew*(chg_bits[sc_ind[0]][combo[0]]*\
-                                              H_r[sc_ind[0]]+chg_bits[sc_ind[0]][combo[0]]**2*H[sc_ind[0]][sc_ind[0]]*2)+\
-                                              (self.miu_bars[sc_ind[0]][combo[0]] if self.miu_bars else 0) for sc_ind in sc_inds]) 
-                                              #miu_bars is how we introduce chem potential.
-                        elif len(sc.bits)==2:
-                            eci_return.extend([eci_new[2][sc.sc_id-clusters_new[2][0].sc_id][i]+eci_ew*chg_bits[sc_ind[0]][combo[0]]*\
-                                               chg_bits[sc_ind[1]][combo[1]]*H[sc_ind[0]][sc_ind[1]] for sc_ind in sc_inds])
-                        else:
-                            eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i] for sc_ind in sc_inds])
-
-            else:
-                #When using inv_r, an independent ewald sum is generated for each specie, and they each are fitted into an ECI.
-                print("I'm still thinking about use_inv_r cases. Not available yet!")
-                raise NotImplementedError
-        else:
-            ce_new = self.ce
-            clusters_new = self.ce.clusters
-            eci_new = {size:[eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in clusters_new[size]] \
-                    for size in clusters_new}
-            clus_sup_new = clus_sup
-            for sc,sc_inds in clus_sup_new.cluster_indices:
-                for i,combo in enumerate(sc.bit_combos):
-                    b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)] for sc_ind in sc_inds])
-                    if len(sc.bits)==1:     
-                        eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
-                                           (self.miu_bars[sc_ind[0]][combo[0]] if self.miu_bars else 0)\
-                                           for sc_ind in sc_inds])
-                    else:
-                        eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i] for sc_ind in sc_inds])
-
-        return b_clusters,eci_return,bit_inds
+        
+        return self.bclus_corrected[mat_id],self.ecis_corrected[mat_id],bit_inds
             
-    def _solve_upper(self,mat,hard_marker=10000):#Warning: hard_marker should be chosen as a big enough number!
+    def _solve_upper(self,mat_id,hard_marker=10000):
+        """
+            Warning: hard_marker should be chosen as a big enough number!
+        """
         #### Input Preparation ####
-        cs = self.ce.supercell_from_matrix(mat)
+        cs = self.ce.supercell_from_matrix(self.enumlist(mat_id))
         cs_bits = get_bits(cs.supercell)
-        b_clusters_new,ecis_new,site_specie_ids=self._electrostatic_correction(cs)
+        b_clusters_new,ecis_new,site_specie_ids=self._electrostatic_correction(mat_id)
         soft_cls = []
         hard_cls = []
         for site_id in range(len(cs.supercell)):
@@ -350,7 +385,7 @@ class GSsemigrand(MSONable):
         return upper_e,upper_str
 
 
-    def _solve_lower(self,mat):
+    def _solve_lower(self,mat_id):
         #### Input Preparation ####
 
         #### Calling Gurobi ####
