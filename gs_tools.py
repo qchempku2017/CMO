@@ -97,7 +97,7 @@ def _make_up_twobodies(symops,clusters,eci,cs):
         pair_c = Cluster([exp_str[site].frac_coords for site in pair],exp_str.lattice)
         pair_sc = SymmetrizedCluster(pair_c,[np.arange(nbits[i]) for i in pair],symops)
         if pair_sc not in clusters_new[2]:
-            print("Adding sym-cluster:",pair_sc)
+            print("Adding sym-cluster:",pair_sc,"\npair:",pair)
             clusters_new[2].append(pair_sc)
             eci_new[2].append([0]*len(pair_sc.bit_combos))
     if cs.use_inv_r:
@@ -329,7 +329,7 @@ class GSsemigrand(MSONable):
             Warning: hard_marker should be chosen as a big enough number!
         """
         #### Input Preparation ####
-        cs = self.ce.supercell_from_matrix(self.enumlist(mat_id))
+        cs = self.ce.supercell_from_matrix(self.enumlist[mat_id])
         cs_bits = get_bits(cs.supercell)
         b_clusters_new,ecis_new,site_specie_ids=self._electrostatic_correction(mat_id)
         soft_cls = []
