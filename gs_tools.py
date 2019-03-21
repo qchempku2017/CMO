@@ -222,6 +222,7 @@ class GSsemigrand(MSONable):
                 print("Ewald correction required!")
 
             for mat in self.enumlist:
+                clus_sup = self.ce.supercell_from_matrix(mat)
 
                 #Generate a refenrence table for MAXSAT var_id to specie_id. Note: MAXSAT var_id starts from 1
                 bit_inds = []
@@ -239,7 +240,6 @@ class GSsemigrand(MSONable):
                 #Ewald correction, as well as chemical potential integration.
                 if self.use_ewald:
                     print("Making up all pair interactions for supercell:",mat)
-                    clus_sup = self.ce.supercell_from_matrix(mat)
 
                     #Reset symops of all Symmetrized clusters, reset ce.structure, make up two body clusters
                     ce_new, eci_new = _make_up_twobodies(self.ce,self.eci,clus_sup)
@@ -249,8 +249,6 @@ class GSsemigrand(MSONable):
                     #Please, don't use clus_sup.supercell_matrix! Instead, use [100,010,001] since ce_new.structure has changed!
                     clus_sup_new = ce_new.supercell_from_matrix([[1,0,0],[0,1,0],[0,0,1]])
 
-                    #point_clus_indices = clus_sup_new.cluster_indices[clusters_new[1][0].sc_id:clusters_new[2][0].sc_id]
-                    #pair_clus_indices = clus_sup_new.cluster_indices[clusters_new[2][0].sc_id:clusters_new[3][0].sc_id]
                     ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup_new.supercell])
                     H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
 
