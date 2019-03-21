@@ -106,7 +106,7 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
 
     #eci_old converted into a dictionary that has the same shape as ce.clusters
     eci_new = {size:[eci_old[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))]\
-               for sc in clusters[size]] for size in ce_old.clusters}
+               for sc in ce_old.clusters[size]] for size in ce_old.clusters}
 
     for pair in combinations(list(range(len(exp_str))),2):
         #print("checking pair",pair)
