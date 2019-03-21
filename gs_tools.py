@@ -1,3 +1,5 @@
+from __future__ import division
+
 from pyabinitio.cluster_expansion.ce import ClusterExpansion,Cluster,SymmetrizedCluster
 from monty.json import MSONable
 import json
@@ -10,6 +12,7 @@ from functools import reduce
 import random
 from itertools import combinations,permutations
 from pymatgen.analysis.ewald import EwaldSummation
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen import Structure,PeriodicSite
 
 __author__ = "Fengyu Xie"
@@ -103,8 +106,7 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
 
     #eci_old converted into a dictionary that has the same shape as ce.clusters
     eci_new = {size:[eci_old[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))]\
-               for sc in clusters[size]] for size in clusters}
-    #last_pair_id = clusters[3][0].sc_b_id -1
+               for sc in clusters[size]] for size in ce_old.clusters}
 
     for pair in combinations(list(range(len(exp_str))),2):
         #print("checking pair",pair)
@@ -117,7 +119,7 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
             eci_new[2].append([0]*len(pair_sc.bit_combos))
 
     if ce_old.use_inv_r:
-        eci_new['ew']=eci[-len(cs.partial_ems):]
+        eci_new['ew']=eci[-len(clus_sup.partial_ems):]
     else:
         eci_new['ew']=eci[-1]
     print('Added %d pair clusters.'%(len(clusters_new[2])-len(ce_old.clusters[2])))
