@@ -93,16 +93,22 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
     exp_sites = [site for site in clus_sup.supercell\
                 if site.species_and_occu.num_atoms < 0.99 or len(site.species_and_occu) > 1]
     exp_str = Structure.from_sites(exp_sites)
+    print("exp_str",exp_str)
     bits = get_bits(exp_str)
     nbits = np.array([len(b) - 1 for b in bits])
+
+    ce_test = ClusterExpansion.from_radii(exp_str,{2:7.0})
+    print("test cluster expansion",ce_test.clusters[2],len(ce_test.clusters[2]))
+    print("initial cluster expansion",ce_old.clusters[2],"num of pair:",len(ce_old.clusters[2]))
 
     # Modifying clusters symmetries.
     clusters_new = {}
     for size in ce_old.clusters:
         clusters_new[size]=[]
-        for sc in clusters_new[size]:
+        for sc in ce_old.clusters[size]:
             new_sc = SymmetrizedCluster(sc.base_cluster,sc.bits,symops_new)
             clusters_new[size].append(new_sc) 
+    #print(clusters_new[2])
 
     #eci_old converted into a dictionary that has the same shape as ce.clusters
     eci_new = {size:[eci_old[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))]\
