@@ -12,7 +12,7 @@ from functools import reduce
 import random
 from itertools import combinations,permutations
 from pymatgen.analysis.ewald import EwaldSummation
-from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer, SymmOp
 from pymatgen import Structure,PeriodicSite
 
 __author__ = "Fengyu Xie"
@@ -83,13 +83,40 @@ def _GetIonChg(ion):
     else:
         return 0
 
+def _modify_symops(symops_old,symops_sup,supmat):
+    """
+        Here we combine all rotations and spires from symops_old with all translations from symops_sup to give symops_new.
+    """
+    symops_prim = []
+    for symop in symops_old:
+       #R'=S^-1*R*S, t'=S^-1*t
+       rot = (supmat.T).I * np.matrix(symop.rotation_matrix)* (supmat.T)
+       t = (supmat.T).I* np.matrix(symop.translation_vector).T
+       rot = rot.tolist()
+       t = np.squeeze(t.T.tolist())
+       symop_prim = SymmOp.from_rotation_and_translation(rot,t.tolist())
+       symops_prim.append(symop_prim)
+    symops_trans = [symop for symop in symops_sup if np.array_equal(symop.rotation_matrix,np.identity(3))]
+    symops_new = []
+    for symop_prim in symops_prim:
+        for symop_trans in symops_trans:
+            symop_new = symop_prim*symop_trans
+            if symop_new not in symops_new:
+                symops_new.append(symop_new)
+    print("Number of symmetry operations in the supercell:",len(symops_new))
+    return symops_new
+
 def _make_up_twobodies(ce_old,eci_old,clus_sup):
     """
         In this part we will find all pair clusters with in a cluster supercell, and make up those not
         covered in previous ce.clusters[2]. Returned results formated in dictionaries.
     """
     
-    symops_new = SpacegroupAnalyzer(clus_sup.supercell).get_symmetry_operations()
+    symops_sup = SpacegroupAnalyzer(clus_sup.supercell).get_symmetry_operations()
+    #The command above does not give our desired symmetry correctly, and a lot of degeneracies will be broken!
+    #I will try to directly add all the displacement vectors to the old symops!
+    symops_old = ce_old.symops
+    symops_new = _modify_symops(symops_old,symops_sup,np.matrix(clus_sup.supercell_matrix))
     exp_sites = [site for site in clus_sup.supercell\
                 if site.species_and_occu.num_atoms < 0.99 or len(site.species_and_occu) > 1]
     exp_str = Structure.from_sites(exp_sites)
