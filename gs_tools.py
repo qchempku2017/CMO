@@ -89,7 +89,7 @@ def _map_symops(exp_str,symops):
         Generate a mapping to indices of symmetry manipulations.
     """
     symops_mapping = []
-    exp_sites = [site.frac_coord for site in exp_str]
+    exp_sites = [site.frac_coords for site in exp_str]
     for symop in symops:
         new_sites = symop.operate_multi(exp_sites)
         symops_mapping.append(coord_list_mapping(new_sites,exp_sites))
