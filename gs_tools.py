@@ -13,6 +13,7 @@ import random
 from itertools import combinations,permutations
 from pymatgen.analysis.ewald import EwaldSummation
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer, SymmOp
+from pymatgen.util.coord import coord_list_mapping
 from pymatgen import Structure,PeriodicSite
 
 __author__ = "Fengyu Xie"
@@ -83,6 +84,17 @@ def _GetIonChg(ion):
     else:
         return 0
 
+def _map_symops(exp_str,symops):
+    """
+        Generate a mapping to indices of symmetry manipulations.
+    """
+    symops_mapping = []
+    exp_sites = [site.frac_coord for site in exp_str]
+    for symop in symops:
+        new_sites = symop.operate_multi(exp_sites)
+        symops_mapping.append(coord_list_mapping(new_sites,exp_sites))
+    return symops_mapping
+
 def _modify_symops(symops_old,symops_sup,supmat):
     """
         Here we combine all rotations and spires from symops_old with all translations from symops_sup to give symops_new.
@@ -142,18 +154,40 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
     
     non_relavant_pairs = []
     print("Establishing all non relavant pairs.")
+    pair_record = []
+    symops_mapping = _map_symops(exp_str,symops_new)
     for i in range(len(exp_str)):
+        pair_record.append([])
         for j in range(i+1,len(exp_str)):
-            
-            
-        
-    for pair in combinations(list(range(len(exp_str))),2):
+            pair_record[-1].append(j)
+    
+    print("Finding all geometrically non-equivalent pairs.")
+    accepted_pairs = []
+    for i,i_j in enumerate(pair_record):
+        j_id = 0
+        while i_j:
+            j=i_j[j_id]
+            for symop in symops_mapping:
+                if not(i==symop[i] and j==symop[j]) and not(i==symop[j] and j==symop[i]):
+                #Only remove other pairs that are identical.
+                    if symop[i] in pair_record[symop[j]]:
+                        pair_record[symop[j]].remove(symop[i])
+                    if symop[j] in pair_record[symop[i]]:
+                        pair_record[symop[i]].remove(symop[j])
+            accepted_pairs.append((i,j))
+            j_id +=1
+
+    max_pair_old = max([pair.base_cluster.max_radius for pair in clusters_new[2]])
+    for pair in accepted_pairs:
         print("checking pair",pair)
         #print([exp_str[site] for site in pair])
         pair_c = Cluster([exp_str[site].frac_coords for site in pair],exp_str.lattice)
         pair_sc = SymmetrizedCluster(pair_c,[np.arange(nbits[i]) for i in pair],symops_new)
-        if pair_sc not in clusters_new[2]:
-            print("Adding sym-cluster:",pair_sc,"\npair:",pair)
+        if pair_sc.base_cluster.max_radius > max_pair_old :
+            """
+                 Just add pair without double check. All are symetrically inequivalent since we have done dedup before.
+            """
+            print("Adding sym-cluster:",pair)
             clusters_new[2].append(pair_sc)
             eci_new[2].append([0]*len(pair_sc.bit_combos))
 
