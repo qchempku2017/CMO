@@ -13,12 +13,13 @@ import random
 from itertools import combinations,permutations
 from pymatgen.analysis.ewald import EwaldSummation
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer, SymmOp
-from pymatgen.util.coord import coord_list_mapping
+from pymatgen.util.coord import coord_list_mapping_pbc
 from pymatgen import Structure,PeriodicSite
 
 __author__ = "Fengyu Xie"
 __version__ = "2019.0.0"
 
+SITE_TOL = 1e-6
 MAXSAT_PATH = './solvers/'
 MAXSAT_CUTOFF = 600
 COMPLETE_MAXSAT = ['akmaxsat','ccls_akmaxsat']
@@ -91,8 +92,10 @@ def _map_symops(exp_str,symops):
     symops_mapping = []
     exp_sites = [site.frac_coords for site in exp_str]
     for symop in symops:
-        new_sites = symop.operate_multi(exp_sites)
-        symops_mapping.append(coord_list_mapping(new_sites,exp_sites))
+        new_sites = [site for site in symop.operate_multi(exp_sites)]
+        #print("New:",new_sites)
+        #print("Old:",exp_sites)
+        symops_mapping.append(coord_list_mapping_pbc(new_sites,exp_sites,atol=SITE_TOL))
     return symops_mapping
 
 def _modify_symops(symops_old,symops_sup,supmat):
