@@ -101,8 +101,7 @@ def _modify_symops(symops_old,symops_sup,supmat):
     for symop_prim in symops_prim:
         for symop_trans in symops_trans:
             symop_new = symop_prim*symop_trans
-            if symop_new not in symops_new:
-                symops_new.append(symop_new)
+            symops_new.append(symop_new)
     print("Number of symmetry operations in the supercell:",len(symops_new))
     return symops_new
 
@@ -120,13 +119,13 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
     exp_sites = [site for site in clus_sup.supercell\
                 if site.species_and_occu.num_atoms < 0.99 or len(site.species_and_occu) > 1]
     exp_str = Structure.from_sites(exp_sites)
-    print("exp_str",exp_str)
+    #print("exp_str",exp_str)
     bits = get_bits(exp_str)
     nbits = np.array([len(b) - 1 for b in bits])
 
-    ce_test = ClusterExpansion.from_radii(exp_str,{2:7.0})
-    print("test cluster expansion",ce_test.clusters[2],len(ce_test.clusters[2]))
-    print("initial cluster expansion",ce_old.clusters[2],"num of pair:",len(ce_old.clusters[2]))
+    #ce_test = ClusterExpansion.from_radii(exp_str,{2:7.0})
+    #print("test cluster expansion",ce_test.clusters[2],len(ce_test.clusters[2]))
+    #print("initial cluster expansion",ce_old.clusters[2],"num of pair:",len(ce_old.clusters[2]))
 
     # Modifying clusters symmetries.
     clusters_new = {}
@@ -140,9 +139,16 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
     #eci_old converted into a dictionary that has the same shape as ce.clusters
     eci_new = {size:[eci_old[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))]\
                for sc in ce_old.clusters[size]] for size in ce_old.clusters}
-
+    
+    non_relavant_pairs = []
+    print("Establishing all non relavant pairs.")
+    for i in range(len(exp_str)):
+        for j in range(i+1,len(exp_str)):
+            
+            
+        
     for pair in combinations(list(range(len(exp_str))),2):
-        #print("checking pair",pair)
+        print("checking pair",pair)
         #print([exp_str[site] for site in pair])
         pair_c = Cluster([exp_str[site].frac_coords for site in pair],exp_str.lattice)
         pair_sc = SymmetrizedCluster(pair_c,[np.arange(nbits[i]) for i in pair],symops_new)
