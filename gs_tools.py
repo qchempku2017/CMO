@@ -156,9 +156,11 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
                for sc in ce_old.clusters[size]] for size in ce_old.clusters}
     
     non_relavant_pairs = []
-    print("Establishing all non relavant pairs.")
+    #print("Establishing all non relavant pairs.")
     pair_record = []
+    print("Mapping symmetry operations.")
     symops_mapping = _map_symops(exp_str,symops_new)
+    #print("Mapped %d symmetry operations"%len(symops_mapping),symops_mapping)
     for i in range(len(exp_str)):
         pair_record.append([])
         for j in range(i+1,len(exp_str)):
@@ -167,9 +169,8 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
     print("Finding all geometrically non-equivalent pairs.")
     accepted_pairs = []
     for i,i_j in enumerate(pair_record):
-        j_id = 0
         while i_j:
-            j=i_j[j_id]
+            j=i_j[0]
             for symop in symops_mapping:
                 if not(i==symop[i] and j==symop[j]) and not(i==symop[j] and j==symop[i]):
                 #Only remove other pairs that are identical.
@@ -178,20 +179,26 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
                     if symop[j] in pair_record[symop[i]]:
                         pair_record[symop[i]].remove(symop[j])
             accepted_pairs.append((i,j))
-            j_id +=1
+            print("Accepted pair:",(i,j))
+            # print("Pair record:", pair_record)
+            del(i_j[0])
 
     max_pair_old = max([pair.base_cluster.max_radius for pair in clusters_new[2]])
     for pair in accepted_pairs:
-        print("checking pair",pair)
+        #print("checking pair",pair)
         #print([exp_str[site] for site in pair])
         pair_c = Cluster([exp_str[site].frac_coords for site in pair],exp_str.lattice)
         pair_sc = SymmetrizedCluster(pair_c,[np.arange(nbits[i]) for i in pair],symops_new)
-        if pair_sc.base_cluster.max_radius > max_pair_old :
+        if pair_c.max_radius > max_pair_old :
             """
                  Just add pair without double check. All are symetrically inequivalent since we have done dedup before.
             """
-            print("Adding sym-cluster:",pair)
+            print("Adding sym-cluster:",pair,"Radius:",pair_c.max_radius)
             clusters_new[2].append(pair_sc)
+            print("pair_c:",pair_c)
+            #print('pair equiv:',pair_sc._equiv,'number:',len(pair_sc._equiv))
+            print('pair multiplicity:',pair_sc.multiplicity)
+            print('Num of self symmetry:',len(pair_sc.cluster_symops))
             eci_new[2].append([0]*len(pair_sc.bit_combos))
 
     if ce_old.use_inv_r:
@@ -248,6 +255,7 @@ class GSsemigrand(MSONable):
         self.use_ewald = self.ce.use_ewald
         self.use_inv_r = self.ce.use_inv_r
         self._enumlist = None
+        self.transmat = [[1,0,0],[0,1,0],[0,0,1]]
     
 ####
 # Callable interface
@@ -272,17 +280,18 @@ class GSsemigrand(MSONable):
         """
         if not(self._enumlist):
             _enumlist=[]
+            scale = int(abs(np.linalg.det(self.transmat)))
             for size in range(int(self.maxsupercell/self.num_of_sizes),self.maxsupercell+1,\
                              int(self.maxsupercell/self.num_of_sizes)):
                 print("Enumerating for size %d"%size)
-                _enumlist.extend(_enumerate_mat(size))
+                _enumlist.extend(_enumerate_mat(int(size/scale)))
             print("Randomly picking supercell matrices.")
             self._enumlist=random.sample(_enumlist,self.selec)
             if self.transmat: 
                 self._enumlist=[_matmul(sc,self.transmat) for sc in self._enumlist]
             self._enumlist=sorted(self._enumlist,key=lambda a:(abs(np.linalg.det(a)),\
                                  np.linalg.norm(a[0]),np.linalg.norm(a[1]),np.linalg.norm(a[2])))
-        print("Enumerated supercells generated!")
+            print("Enumerated supercells generated!")
         return self._enumlist
     
     @property
