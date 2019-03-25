@@ -478,7 +478,7 @@ class GSsemigrand(MSONable):
         
         return self.bclus_corrected[mat_id],self.ecis_corrected[mat_id],self.bit_inds[mat_id]
             
-    def _solve_upper(self,mat_id,hard_marker=10000):
+    def _solve_upper(self,mat_id,hard_marker=1000000000000):
         """
             Warning: hard_marker is the weight assigened to hard clauses. Should be chosen as a big enough number!
         """
@@ -488,16 +488,18 @@ class GSsemigrand(MSONable):
         soft_cls = []
         hard_cls = []
         for site_id in range(N_sites):
-            hard_cls.extend([[int(10000)]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(site_specie_ids[site_id],2)])
+            hard_cls.extend([[int(hard_marker)]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(site_specie_ids[site_id],2)])
         #Hard clauses to enforce sum(specie_occu)=1
 
         for b_cluster,eci in zip(b_clusters_new,ecis_new):
-            clause = [eci]
-            for b_id in b_cluster:
-                clause.append(int(-1*b_id))
+            if int(eci*1000000000)>0: #Solver requires that all weights >=1, when eci<10^-9, cluster will be ignored!
+                clause = [int(eci*1000000000)]  
+            #MAXSAT 2016 series only takes in integer weights
+                for b_id in b_cluster:
+                    clause.append(int(-1*b_id))
         #Don't worry about the last specie for a site. It is take as a referecne specie, 
         #thus not counted into nbits and combos at all!!!
-            soft_cls.append(clause)
+                soft_cls.append(clause)
 
         all_cls = hard_cls+soft_cls
         #print('all_cls',all_cls)
@@ -513,12 +515,16 @@ class GSsemigrand(MSONable):
         #### Calling MAXSAT ####
         rand_seed = random.randint(1,100000)
         print('Callsing MAXSAT solver. Using random seed %d.'%rand_seed)
-        MAXSAT_CMD = MAXSAT_PATH+self.ubsolver+' ./maxsat.wcnf'
+        os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
+        os.chdir(MAXSAT_PATH)
+        MAXSAT_CMD = './'+self.ubsolver+' ./maxsat.wcnf'
         if self.ubsolver in INCOMPLETE_MAXSAT:
             MAXSAT_CMD += ' %d %d'%(rand_seed,MAXSAT_CUTOFF)
         MAXSAT_CMD += '> maxsat.out'
         print(MAXSAT_CMD)
         os.system(MAXSAT_CMD)
+        os.chdir('..')
+        os.system('cp '+MAXSAT_PATH+'maxsat.out'+' ./maxsat.out')
         print('MAXSAT solution found!')
 
         #### Output Processing ####
@@ -528,22 +534,22 @@ class GSsemigrand(MSONable):
             for line in lines:
                 if line[0]=='v':
                     maxsat_res = [int(num) for num in line.split()[1:]]
-
+        sorted(maxsat_res,key=lambda x:abs(x))
         ce_new = self.ces_new[mat_id]
         cs = ce_new.supercell_from_matrix(self.enumlist[mat_id])
         cs_bits = get_bits(cs.supercell)
         upper_sites = []
         for s,site in enumerate(site_specie_ids):
             should_be_ref = True
+            st = cs.supercell[s]
             for v_id,var_id in enumerate(site):
             #For all variables on a site, only one could be true. If no hard cluases fail.
                 if maxsat_res[var_id-1]>0:
-                    st = cs.supercell[s]
-                    upper_sites.append([PeriodicSite(cs_bits[s][v_id],st.frac_coords,st.lattice)])
+                    upper_sites.append(PeriodicSite(cs_bits[s][v_id],st.frac_coords,st.lattice))
                     should_be_ref = False
                     break
             if should_be_ref:
-                upper_sites.append([PeriodicSite(cs_bits[s][-1],st.frac_coords,st.lattice)])
+                upper_sites.append(PeriodicSite(cs_bits[s][-1],st.frac_coords,st.lattice))
         upper_str = Structure.from_sites(upper_sites)
         upper_corr = cs.corr_from_structure(upper_str)
         upper_e = np.dot(np.array(self.ecis_corrected[mat_id]),upper_corr)
