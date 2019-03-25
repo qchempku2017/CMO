@@ -6,6 +6,7 @@ import json
 import numpy as np
 import math
 import random
+import os
 from copy import deepcopy
 from operator import mul
 from functools import reduce
@@ -142,12 +143,12 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
     #print("test cluster expansion",ce_test.clusters[2],len(ce_test.clusters[2]))
     #print("initial cluster expansion",ce_old.clusters[2],"num of pair:",len(ce_old.clusters[2]))
 
-    # Modifying clusters symmetries.
+    # Reinitiate. Don't need to modify to new symmetry
     clusters_new = {}
     for size in ce_old.clusters:
         clusters_new[size]=[]
         for sc in ce_old.clusters[size]:
-            new_sc = SymmetrizedCluster(sc.base_cluster,sc.bits,symops_new)
+            new_sc = SymmetrizedCluster(sc.base_cluster,sc.bits,ce_old.symops)
             clusters_new[size].append(new_sc) 
     #print(clusters_new[2])
 
@@ -187,32 +188,41 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
     for pair in accepted_pairs:
         #print("checking pair",pair)
         #print([exp_str[site] for site in pair])
-        pair_c = Cluster([exp_str[site].frac_coords for site in pair],exp_str.lattice)
-        pair_sc = SymmetrizedCluster(pair_c,[np.arange(nbits[i]) for i in pair],symops_new)
-        if pair_c.max_radius > max_pair_old :
+        #Need to transform clusters in supercells back before adding them into cluster expansion!
+        #We actually don't need too forcibly add internal translations to supercells, since they are included in
+        #ClusterSupercell.coord_list_mapping_pbc!
+        pair_sup_coord = [exp_str[site].frac_coords for site in pair]
+        pair_prim_coord = np.dot(pair_sup_coord,clus_sup.supercell_matrix)
+
+        pair_c = Cluster([site for site in pair_prim_coord],exp_str.lattice)
+        pair_sc = SymmetrizedCluster(pair_c,[np.arange(nbits[i]) for i in pair],ce_old.symops)
+
+        if pair_c.max_radius > max_pair_old:
             """
                  Just add pair without double check. All are symetrically inequivalent since we have done dedup before.
             """
             print("Adding sym-cluster:",pair,"Radius:",pair_c.max_radius)
             clusters_new[2].append(pair_sc)
-            print("pair_c:",pair_c)
+            #print("pair_c:",pair_c)
             #print('pair equiv:',pair_sc._equiv,'number:',len(pair_sc._equiv))
-            print('pair multiplicity:',pair_sc.multiplicity)
-            print('Num of self symmetry:',len(pair_sc.cluster_symops))
+            #print('pair multiplicity:',pair_sc.multiplicity)
+            #print('Num of self symmetry:',len(pair_sc.cluster_symops))
             eci_new[2].append([0]*len(pair_sc.bit_combos))
 
     if ce_old.use_inv_r:
-        eci_new['ew']=eci[-len(clus_sup.partial_ems):]
+        eci_new['ew']=eci_old[-len(clus_sup.partial_ems):]
     else:
-        eci_new['ew']=eci[-1]
+        eci_new['ew']=eci_old[-1]
     print('Added %d pair clusters.'%(len(clusters_new[2])-len(ce_old.clusters[2])))
 
-    ce_new = ClusterExpansion(structure=clus_sup.supercell, expansion_structure=exp_str,\
-                              symops=symops_new, clusters= clusters_new,\
+    ce_new = ClusterExpansion(structure=ce_old.structure, expansion_structure=ce_old.expansion_structure,\
+                              symops=ce_old.symops, clusters= clusters_new,\
                               ltol=ce_old.ltol, stol=ce_old.stol, angle_tol=ce_old.angle_tol,\
                               supercell_size=ce_old.supercell_size,\
                               use_ewald=False, use_inv_r=False, eta=None)
     #Here we disable ewald in ce_new in order to make our life easier in later energy summations.
+    #print('eci_new',eci_new,len(eci_new))
+    #print('ce_new',ce_new.clusters)
     return ce_new,eci_new
 
 #####
@@ -224,7 +234,7 @@ class GSsemigrand(MSONable):
     Defines a ground state problem for a generalized ising system. Uses 0/1 formalism.
     """
 
-    def __init__(self, ce, eci,maxsupercell=100, num_of_sizes=4, selec=20 , ubsolver='ccls_akmaxsat', miu_bars=None):
+    def __init__(self, ce, eci,maxsupercell=100, num_of_sizes=4, selec=20 , ubsolver='akmaxsat', miu_bars=None):
         """
         Args:
             ce: a cluster expansion object that you wish to solve the GS of.
@@ -232,9 +242,12 @@ class GSsemigrand(MSONable):
             maxsupercell: largest cutoff supercell determinant.
             num_of_sizes: number of supercell sizes to be enumerated.
             selec: number of supercells to select after enumeration
-            ubsolver: the MAXSAT solver used to solve the upper bound problem. Default: ccls_akmaxsat.
-            miu_bars: this solver socket works under semi grand canonical ensemble. miu_bar is the relative chemical potential of species recorded in a                      dict. Notice: currently we don't convert into compositional axis representation here. Please do it somewhere else! The default 
-                      references for miu_bar are the last species on each site, so miu_bars here is supposed to have the same shape and size as ce.nbit                      s. By default, all relative chemical potentials are set to zeroes.
+            ubsolver: the MAXSAT solver used to solve the upper bound problem. Default: akmaxsat.
+            miu_bars: this solver socket works under semi grand canonical ensemble. miu_bar is the relative chemical potential of 
+                      species recorded in a dict. Notice: currently we don't convert into compositional axis representation here. 
+                      Please do it somewhere else! The default references for miu_bar are the last species on each site, so 
+                      miu_bars here is supposed to have the same shape and size as ce.nbits. By default, all relative chemical 
+                      potentials are set to zeroes.
         """
         self.ce = ce
         self.eci = eci
@@ -305,6 +318,7 @@ class GSsemigrand(MSONable):
             self._bclus_corrected = []
             self._ecis_corrected = []
             self._bit_inds = []
+            self._ces_new = []
             if self.use_ewald:
                 print("Ewald correction required!")
 
@@ -323,6 +337,7 @@ class GSsemigrand(MSONable):
                     bit_inds.append(site_bit_inds)
                 print('%d variables will be used in MAXSAT.'%(b_id-1))
                 self._bit_inds.append(bit_inds)
+                #print(bit_inds)
 
                 #Ewald correction, as well as chemical potential integration.
                 if self.use_ewald:
@@ -330,11 +345,13 @@ class GSsemigrand(MSONable):
 
                     #Reset symops of all Symmetrized clusters, reset ce.structure, make up two body clusters
                     ce_new, eci_new = _make_up_twobodies(self.ce,self.eci,clus_sup)
+                    #print('ce_new',ce_new.clusters)
+                    #print('eci_new',eci_new)
 
                     clusters_new = ce_new.clusters
 
-                    #Please, don't use clus_sup.supercell_matrix! Instead, use [100,010,001] since ce_new.structure has changed!
-                    clus_sup_new = ce_new.supercell_from_matrix([[1,0,0],[0,1,0],[0,0,1]])
+                    #ce_new.structure == ce_old.structure!
+                    clus_sup_new = ce_new.supercell_from_matrix(mat)
 
                     ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup_new.supercell])
                     H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
@@ -348,24 +365,31 @@ class GSsemigrand(MSONable):
 
                     if not self.use_inv_r:
                         eci_ew = eci_new['ew']
-                        H_r = H*r
+                        H_r = np.dot(H,r)
                         #Here we do electro-static correction. Reference zero energy state is the one that all sites are occupied by reference compound. Relative chemical potential of species will also be integrated here.
                         for sc,sc_inds in clus_sup_new.cluster_indices:
-                            for i,combo in enumerate(sc.bit_combos):
-                                b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)] for sc_ind in sc_inds])
-                                if len(sc.bits)==1:     
-                                    eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
+                            for i,all_combo in enumerate(sc.bit_combos):
+                                #An item in bit_combos store an orbit of equivalent bit combinations, not just one.
+                                #len(sc_inds[item][1])=clustersupercell.size*sc.multiplicity,
+                                #sc.multiplicity=len(sc.equivalent_clusters)
+                                #sc.multiplicity*len(sc.cluster_symops)=len(ce.symops)
+                                #Thus, all bit_combo in bit_combo[item] should be included, not just bit_combo[item][0]!
+                                for combo in all_combo:
+                                    b_clusters.extend([[bit_inds[sc_ind[s]][combo[s]] for s in range(len(sc_ind))]\
+                                                  for sc_ind in sc_inds])
+                                    if len(sc.bits)==1:     
+                                        eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
                                                       eci_ew*(chg_bits[sc_ind[0]][combo[0]]*H_r[sc_ind[0]]+\
                                                               chg_bits[sc_ind[0]][combo[0]]**2*H[sc_ind[0]][sc_ind[0]]*2)+\
                                                       (self.miu_bars[sc_ind[0]][combo[0]] if self.miu_bars else 0)\
                                                       for sc_ind in sc_inds]) 
                                     #miu_bars is how we introduce chem potential.
-                                elif len(sc.bits)==2:
-                                    eci_return.extend([eci_new[2][sc.sc_id-clusters_new[2][0].sc_id][i]+\
+                                    elif len(sc.bits)==2:
+                                        eci_return.extend([eci_new[2][sc.sc_id-clusters_new[2][0].sc_id][i]+\
                                                       eci_ew*chg_bits[sc_ind[0]][combo[0]]*chg_bits[sc_ind[1]][combo[1]]*\
                                                       H[sc_ind[0]][sc_ind[1]] for sc_ind in sc_inds])
-                                else:
-                                    eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i]\
+                                    else:
+                                        eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i]\
                                                       for sc_ind in sc_inds])
 
                     else:
@@ -380,14 +404,16 @@ class GSsemigrand(MSONable):
                                for size in clusters_new}
                     clus_sup_new = self.ce.supercell_from_matrix(mat)
                     for sc,sc_inds in clus_sup_new.cluster_indices:
-                        for i,combo in enumerate(sc.bit_combos):
-                            b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)] for sc_ind in sc_inds])
-                            if len(sc.bits)==1:     
-                                eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
+                        for i,all_combo in enumerate(sc.bit_combos):
+                            for combo in all_combo:
+                                b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
+                                                  for sc_ind in sc_inds])
+                                if len(sc.bits)==1:     
+                                    eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
                                                    (self.miu_bars[sc_ind[0]][combo[0]] if self.miu_bars else 0)\
                                                    for sc_ind in sc_inds])
-                            else:
-                                eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i]\
+                                else:
+                                    eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i]\
                                                    for sc_ind in sc_inds])
 
                 self._bclus_corrected.append(b_clusters)
@@ -474,12 +500,13 @@ class GSsemigrand(MSONable):
             soft_cls.append(clause)
 
         all_cls = hard_cls+soft_cls
+        #print('all_cls',all_cls)
         
         num_of_vars = sum([len(line) for line in site_specie_ids])
         num_of_cls = len(all_cls)
-        maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d'%(num_of_vars,num_of_cls,hard_marker)
+        maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(num_of_vars,num_of_cls,hard_marker)
         for clause in all_cls:
-            maxsat_input+=([str(lit) for lit in clause].join(' ')+' 0\n')
+            maxsat_input+=(' '.join([str(lit) for lit in clause])+' 0\n')
         f_maxsat = open('maxsat.wcnf','w')
         f_maxsat.write(maxsat_input)
         f_maxsat.close()
@@ -490,10 +517,12 @@ class GSsemigrand(MSONable):
         if self.ubsolver in INCOMPLETE_MAXSAT:
             MAXSAT_CMD += ' %d %d'%(rand_seed,MAXSAT_CUTOFF)
         MAXSAT_CMD += '> maxsat.out'
-        os.sys(MAXSAT_CMD)
+        print(MAXSAT_CMD)
+        os.system(MAXSAT_CMD)
         print('MAXSAT solution found!')
 
         #### Output Processing ####
+        maxsat_res = []
         with open('./maxsat.out') as f_res:
             lines = f_res.readlines()
             for line in lines:
@@ -510,11 +539,11 @@ class GSsemigrand(MSONable):
             #For all variables on a site, only one could be true. If no hard cluases fail.
                 if maxsat_res[var_id-1]>0:
                     st = cs.supercell[s]
-                    upper_sites.append([PeriodicSite(cs_bits[s][v_id],st.frac_coord,st.lattice)])
+                    upper_sites.append([PeriodicSite(cs_bits[s][v_id],st.frac_coords,st.lattice)])
                     should_be_ref = False
                     break
             if should_be_ref:
-                upper_sites.append([PeriodicSite(cs_bits[s][-1],st.frac_coord,st.lattice)])
+                upper_sites.append([PeriodicSite(cs_bits[s][-1],st.frac_coords,st.lattice)])
         upper_str = Structure.from_sites(upper_sites)
         upper_corr = cs.corr_from_structure(upper_str)
         upper_e = np.dot(np.array(self.ecis_corrected[mat_id]),upper_corr)
@@ -557,6 +586,11 @@ class GSsemigrand(MSONable):
             gs_socket.str_upper=d['str_upper']
         if 'transmat' in d:
             gs_socket.transmat=d['transmat']
+        if 'bclus_corrected' in d and 'ecis_corrected' in d and 'bit_inds' in d and 'ces_new' in d:
+            gs_socket._bclus_corrected = d['bclus_corrected']
+            gs_socket._ecis_corrected = d['ecis_corrected']
+            gs_socket._bit_inds = d['bit_inds']
+            gs_socket._ces_new = d['ces_new']
         if ('e_lower' in d) and ('e_upper' in d) and np.abs(d['e_lower']-d['e_upper'])<=0.001 and ('str_upper' in d):
             gs_socket.solved=True
             print("Loaded cluster expansion already has a solved GS. GS energy: %f"%(gs_socket.e_upper))
@@ -566,6 +600,11 @@ class GSsemigrand(MSONable):
         return gs_socket
     
     def as_dict(self):
+        if not self.solved:
+            print("Your ground state has not been solved yet, solving for you.")
+            self.solved = self.solve()
+        if not self.solved:
+            print("We have tried our best but we only got these...")
         return {'cluster_expansion':self.ce.as_dict(),\
                 'ecis':self.eci,\
                 'maxsupercell':self.maxsupercell,\
@@ -577,6 +616,11 @@ class GSsemigrand(MSONable):
                 'e_upper':self.e_upper,\
                 'str_upper':self.str_upper.as_dict(),\
                 'transmat':self.transmat,\
+                'bclus_corrected':self.bclus_corrected,\
+                'ecis_corrected':self.ecis_corrected,\
+                'bit_inds':self.bit_inds,\
+                'ces_new':self.ces_new,\
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
                }
+        
