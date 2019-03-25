@@ -234,7 +234,7 @@ class GSsemigrand(MSONable):
     Defines a ground state problem for a generalized ising system. Uses 0/1 formalism.
     """
 
-    def __init__(self, ce, eci,maxsupercell=100, num_of_sizes=4, selec=20 , ubsolver='akmaxsat', miu_bars=None):
+    def __init__(self, ce, eci,maxsupercell=100, num_of_sizes=4, selec=20 , ubsolver='ccls_akmaxsat', miu_bars=None):
         """
         Args:
             ce: a cluster expansion object that you wish to solve the GS of.
@@ -242,7 +242,7 @@ class GSsemigrand(MSONable):
             maxsupercell: largest cutoff supercell determinant.
             num_of_sizes: number of supercell sizes to be enumerated.
             selec: number of supercells to select after enumeration
-            ubsolver: the MAXSAT solver used to solve the upper bound problem. Default: akmaxsat.
+            ubsolver: the MAXSAT solver used to solve the upper bound problem. Default: ccls_akmaxsat.
             miu_bars: this solver socket works under semi grand canonical ensemble. miu_bar is the relative chemical potential of 
                       species recorded in a dict. Notice: currently we don't convert into compositional axis representation here. 
                       Please do it somewhere else! The default references for miu_bar are the last species on each site, so 
