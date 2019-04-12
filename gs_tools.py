@@ -26,11 +26,28 @@ MAXSAT_CUTOFF = 600
 COMPLETE_MAXSAT = ['akmaxsat','ccls_akmaxsat']
 INCOMPLETE_MAXSAT = ['CCLS2015']
 "In this file we will provide socket functions to ground state solver I/O."
-
+"For number of hard clauses issue, we firstly try to reduce the problem size
+down to 16 sites."
 
 #####
 # Tool functions
 #####
+def _GCD(a,b):
+	""" The Euclidean Algorithm """
+    a = abs(a)
+    b = abs(b)
+    while a:
+        a, b = b%a, a
+    return b    
+        
+def _GCD_List(lst):
+	""" Finds the GCD of numbers in a list.
+	Input: List of numbers you want to find the GCD of
+		E.g. [8, 24, 12]
+	Returns: GCD of all numbers, 4 
+	"""
+    return reduce(_GCD, lst)
+
 def _factors(n):
     """
     This function take in an integer n and computes all integer multiplicative factors of n
@@ -229,25 +246,26 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
 #Class functions
 #####
 
-class GSsemigrand(MSONable):
+class GScanonical(MSONable):
     """
-    Defines a ground state problem for a generalized ising system. Uses 0/1 formalism.
+    Defines a ground state problem for a generalized ising system. Uses 0/1(cluster counting) formalism.
     """
 
-    def __init__(self, ce, eci,maxsupercell=100, num_of_sizes=4, selec=20 , ubsolver='ccls_akmaxsat', miu_bars=None):
+    def __init__(self, ce, eci, composition, maxsupercell=16, num_of_sizes=4, selec=20, ubsolver='ccls_akmaxsat'):
         """
         Args:
             ce: a cluster expansion object that you wish to solve the GS of.
             eci: eci's of clusters in ce
-            maxsupercell: largest cutoff supercell determinant.
+            maxsupercell: maximum supercell sizes
             num_of_sizes: number of supercell sizes to be enumerated.
-            selec: number of supercells to select after enumeration
+            selec: number of supercell matrix to selec.
             ubsolver: the MAXSAT solver used to solve the upper bound problem. Default: ccls_akmaxsat.
-            miu_bars: this solver socket works under semi grand canonical ensemble. miu_bar is the relative chemical potential of 
-                      species recorded in a dict. Notice: currently we don't convert into compositional axis representation here. 
-                      Please do it somewhere else! The default references for miu_bar are the last species on each site, so 
-                      miu_bars here is supposed to have the same shape and size as ce.nbits. By default, all relative chemical 
-                      potentials are set to zeroes.
+            composition: a list of dictionaries that represents species occupation ratio on each site. For example:
+                         [{'Li+':8,'Co3+':6,'Co4+':2},{'O2-':13,'F-':3}]
+                         Compositions are read from the CE file constructed by the CE generator.
+                         Note: The canonical ensemble is established on SUBLATTICES, so there can't be specie exchange
+                               between sublattices. If you want to consider that, you have to do that in the enumerator
+                               part!!
         """
         self.ce = ce
         self.eci = eci
@@ -258,13 +276,19 @@ class GSsemigrand(MSONable):
         self.maxsupercell = maxsupercell
         self.num_of_sizes = num_of_sizes
         self.selec = selec
-        self.miu_bars=miu_bars
+        
+        sp_list = []
+        for site_occu in composition:
+            sp_list.extend(site_occu.values())
+        self._comp_step = _GCD_List(sp_list)
+        # Find the enumeration step for composition, and this will be the minimum enumerated supercell size.
+        self.composition=[{sp:site_occu[sp]/comp_step for sp in site_occu} for site_occu in composition]
+
         self.ubsolver = ubsolver
         self.e_lower = None
         self.str_upper = None
         self.e_upper = None
         self.solved = False  #call function 'solve' to give a value to this
-        self.transmat = None
         self.use_ewald = self.ce.use_ewald
         self.use_inv_r = self.ce.use_inv_r
         self._enumlist = None
@@ -294,10 +318,21 @@ class GSsemigrand(MSONable):
         if not(self._enumlist):
             _enumlist=[]
             scale = int(abs(np.linalg.det(self.transmat)))
-            for size in range(int(self.maxsupercell/self.num_of_sizes),self.maxsupercell+1,\
-                             int(self.maxsupercell/self.num_of_sizes)):
+
+            min_size = sum(self.composition[0].values())
+            enumrange = list(range(int(self.maxsupercell/self.num_of_sizes),self.maxsupercell+1,\
+                              int(self.maxsupercell/self.num_of_sizes)))
+            enumrange = [size if size>min_size for size in enumrange]
+            if len(enumrange)==0:
+                print('No enumerated size acceptable. You should consider adjusting your compostion enumeration\
+                       step in generator, or adjust maxsupercell to a proper value (Warning: a value >16 not \
+                       recommended.)')
+                return
+
+            for size in enumrange:
                 print("Enumerating for size %d"%size)
                 _enumlist.extend(_enumerate_mat(int(size/scale)))
+
             print("Randomly picking supercell matrices.")
             self._enumlist=random.sample(_enumlist,self.selec)
             if self.transmat: 
@@ -310,8 +345,7 @@ class GSsemigrand(MSONable):
     @property
     def bclus_corrected(self):
         """
-            Returns a list of ewald corrected and chemical potential biased bit_clusters, each element for a matrix in self.
-            enumlist.
+            Returns a list of ewald corrected bit_clusters, each element for a matrix in self.enumlist.
         """
 
         if (not self._bclus_corrected) or (not self._ecis_corrected) or (not self._bit_inds) or (not self._ces_new):
@@ -380,10 +414,9 @@ class GSsemigrand(MSONable):
                                     if len(sc.bits)==1:     
                                         eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
                                                       eci_ew*(chg_bits[sc_ind[0]][combo[0]]*H_r[sc_ind[0]]+\
-                                                              chg_bits[sc_ind[0]][combo[0]]**2*H[sc_ind[0]][sc_ind[0]]*2)+\
-                                                      (self.miu_bars[sc_ind[0]][combo[0]] if self.miu_bars else 0)\
-                                                      for sc_ind in sc_inds]) 
-                                    #miu_bars is how we introduce chem potential.
+                                                              chg_bits[sc_ind[0]][combo[0]]**2*H[sc_ind[0]][sc_ind[0]]*2)\
+                                                           for sc_ind in sc_inds]) 
+                                    
                                     elif len(sc.bits)==2:
                                         eci_return.extend([eci_new[2][sc.sc_id-clusters_new[2][0].sc_id][i]+\
                                                       eci_ew*chg_bits[sc_ind[0]][combo[0]]*chg_bits[sc_ind[1]][combo[1]]*\
@@ -409,9 +442,8 @@ class GSsemigrand(MSONable):
                                 b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
                                                   for sc_ind in sc_inds])
                                 if len(sc.bits)==1:     
-                                    eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
-                                                   (self.miu_bars[sc_ind[0]][combo[0]] if self.miu_bars else 0)\
-                                                   for sc_ind in sc_inds])
+                                    eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]\
+                                                       for sc_ind in sc_inds])
                                 else:
                                     eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i]\
                                                    for sc_ind in sc_inds])
@@ -478,7 +510,7 @@ class GSsemigrand(MSONable):
         
         return self.bclus_corrected[mat_id],self.ecis_corrected[mat_id],self.bit_inds[mat_id]
             
-    def _solve_upper(self,mat_id,hard_marker=1000000000000):
+    def _solve_upper(self,mat_id,hard_marker=1000000000000000000,eci_mul=1000000000):
         """
             Warning: hard_marker is the weight assigened to hard clauses. Should be chosen as a big enough number!
         """
@@ -487,20 +519,56 @@ class GSsemigrand(MSONable):
         N_sites = len(site_specie_ids)
         soft_cls = []
         hard_cls = []
+
         for site_id in range(N_sites):
-            hard_cls.extend([[int(hard_marker)]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(site_specie_ids[site_id],2)])
+            hard_cls.extend([[hard_marker]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(site_specie_ids[site_id],2)])
         #Hard clauses to enforce sum(specie_occu)=1
 
+        sublat_sp_ids = [[]]*len(self.ce.structure)
+        sc_size = int(round(self.enumlist[mat_id]))
+        
+        site_id = 0
+        while site_id<N_sites:
+            for sp,sp_id in enumerate(site_specie_ids[site_id]):
+                if len(sublat_ps_ids[site_id//sc_size])<len(site_species_ids[site_id]):
+                    sublat_ps_ids[site_id//sc_size].append([])
+                sublat_ps_ids[site_id//sc_size][sp].append(sp_id)
+            site_id+=1
+
+        comp_scale = int(sc_size/round(sum(self.composition[0].values())))
+        scaled_composition = [{sp:sublat[sp]*comp_scale for sp in sublat} for sublat in self.composition]
+        for sl_id,sublat in enumerate(sublat_ps_ids):
+            for sp_id,specie_ids in enumerate(sublat):
+                sp_name = self.ce.structure[sl_id].species_and_occu.key()[sp_id]
+                hard_cls.extend([[hard_marker]+\
+                                 [int(-1*b_id) for b_id in combo]+\
+                                 [int(b_id) for b_id in specie_id if b_id not in combo] \
+                                 for combo in combinations(specie_ids,scaled_composition[sl_id][sp_name])])
+        #Hard clauses to enforce composition consistency,scales with O(2^N). Updated Apr 12 19
+        
+        all_eci_sum = 0
         for b_cluster,eci in zip(b_clusters_new,ecis_new):
-            if int(eci*1000000000)>0: #Solver requires that all weights >=1, when eci<10^-9, cluster will be ignored!
-                clause = [int(eci*1000000000)]  
+            if int(eci*eci_mul)!=0: 
+            #2016 Solver requires that all weights >=1 positive int!! when abs(eci)<1/eci_mul, cluster will be ignored!
+                if eci>0:
+                    clause = [int(eci*eci_mul)]
+                    all_eci_sum += int(eci*eci_mul)  
             #MAXSAT 2016 series only takes in integer weights
-                for b_id in b_cluster:
-                    clause.append(int(-1*b_id))
+                    for b_id in b_cluster:
+                        clause.append(int(-1*b_id))
         #Don't worry about the last specie for a site. It is take as a referecne specie, 
         #thus not counted into nbits and combos at all!!!
-                soft_cls.append(clause)
+                    soft_cls.append(clause)
+                else:
+                    clauses_to_add = []
+                    for i in range(len(b_cluster)):
+                        clause = [int(-1*eci*eci_mul),int(b_cluster[i])]
+                        for j in range(i+1,len(b_cluster)):
+                            clause.append(int(-1*b_cluster[j]))
+                        clauses_to_add.append(clause)
+                    soft_cls.extend(clauses_to_add)
 
+        print('Summation of all ecis:',all_eci_sum)
         all_cls = hard_cls+soft_cls
         #print('all_cls',all_cls)
         
@@ -535,6 +603,7 @@ class GSsemigrand(MSONable):
                 if line[0]=='v':
                     maxsat_res = [int(num) for num in line.split()[1:]]
         sorted(maxsat_res,key=lambda x:abs(x))
+
         ce_new = self.ces_new[mat_id]
         cs = ce_new.supercell_from_matrix(self.enumlist[mat_id])
         cs_bits = get_bits(cs.supercell)
@@ -551,8 +620,9 @@ class GSsemigrand(MSONable):
             if should_be_ref:
                 upper_sites.append(PeriodicSite(cs_bits[s][-1],st.frac_coords,st.lattice))
         upper_str = Structure.from_sites(upper_sites)
-        upper_corr = cs.corr_from_structure(upper_str)
-        upper_e = np.dot(np.array(self.ecis_corrected[mat_id]),upper_corr)
+        upper_cs = self.ce.supercell_from_structure(upper_str)
+        upper_corr = upper_cs.corr_from_structure(upper_str)
+        upper_e = np.dot(np.array(self.eci),upper_corr)
         return upper_e,upper_str
 
 
@@ -563,13 +633,15 @@ class GSsemigrand(MSONable):
 
         #### Output Processing ####
         raise NotImplementedError
+
+
 ####
 # I/O interface
 ####
     @classmethod
     def from_dict(cls,d):
         ce = ClusterExpansion.from_dict(d['cluster_expansion'])
-        gs_socket= cls(ce,d['ecis']) 
+        gs_socket= cls(ce,d['ecis'],d['composition']) 
         #essential terms for initialization
         if 'maxsupercell' in d:
             gs_socket.maxsupercell=d['maxsupercell']
@@ -579,8 +651,6 @@ class GSsemigrand(MSONable):
             gs_socket.selec = d['selec']
         if 'ubsolver' in d:
             gs_socket.ubsolver = d['ubsolver']
-        if 'miu_bars' in d:
-            gs_socket.miu_bars = d['miu_bars']
         if 'e_lower' in d:
             gs_socket.e_lower=d['e_lower']        
         if 'lastsupermat' in d:
@@ -599,8 +669,8 @@ class GSsemigrand(MSONable):
             gs_socket._ces_new = d['ces_new']
         if ('e_lower' in d) and ('e_upper' in d) and np.abs(d['e_lower']-d['e_upper'])<=0.001 and ('str_upper' in d):
             gs_socket.solved=True
-            print("Loaded cluster expansion already has a solved GS. GS energy: %f"%(gs_socket.e_upper))
-            print("Under external chemical potential:",gs_socket.miu_bars)
+            print("Loaded instance already has a solved GS. GS energy: %f"%(gs_socket.e_upper))
+            print("Under composition:",gs_socket.composition)
         else:
             print("Loaded cluster expansion needs GS solution. Use self.solve() method to generate one.")
         return gs_socket
@@ -610,14 +680,14 @@ class GSsemigrand(MSONable):
             print("Your ground state has not been solved yet, solving for you.")
             self.solved = self.solve()
         if not self.solved:
-            print("We have tried our best but we only got these...")
+            print("We have tried our best but we only got these. You may want to tune your calculation parameters.")
         return {'cluster_expansion':self.ce.as_dict(),\
                 'ecis':self.eci,\
+                'composition':self.composition,\
                 'maxsupercell':self.maxsupercell,\
                 'num_of_sizes':self.num_if_sizes,\
                 'selec':self.selec,\
                 'ubsolver':self.ubsolver,\
-                'miu_bars':self.miu_bars,\
                 'e_lower':self.e_lower,\
                 'e_upper':self.e_upper,\
                 'str_upper':self.str_upper.as_dict(),\
@@ -629,4 +699,4 @@ class GSsemigrand(MSONable):
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
                }
-        
+
