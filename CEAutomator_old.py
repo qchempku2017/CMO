@@ -6,15 +6,17 @@ from __future__ import unicode_literals
 __author__ = 'Bin Ouyang & Fengyu_xie'
 __version__ = 'Dev'
 
-import json
-from monty.json import MSONable
+
 import os
 import sys
+import argparse
+import json
 import random
 from copy import deepcopy
 import numpy as np
 import numpy.linalg as la
 from pymatgen.analysis.structure_matcher import StructureMatcher, ElementComparator
+from pyabinitio.cluster_expansion.eci_fit import EciGenerator
 from pyabinitio.cluster_expansion.ce import ClusterExpansion
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from itertools import groupby
@@ -47,81 +49,127 @@ ox_ranges = {'Mn': {(0.5, 1.5): 2,
 #Pre-calculate it and make it into a data file like json or yaml (works like the DFT+U paprameters);
 ##################################
 
-##################################
-## General tools that will be frequently cross referenced
-##################################
-def _GetIonChg(ion):
+VASPRUN = False
+
+def fit_ce(InFileLst,Prim,OutFile):
+    # Load calculations from list of json savefiles
+    CalcData=[];
+    for InFile in InFileLst:
+        with open(InFile, 'r') as Fid:CalcData.extend(json.loads(Fid.read()));
+    # Define cluster expansion, basis set, Have to do volume scaling in this configuration
+    # could also do num_sites since there are no vacancies here
+    CE=ClusterExpansion.from_radii(prim, {2: 7, 3: 4.1, 4: 4.1},ltol=0.15, \
+                                     stol=0.2, angle_tol=2,supercell_size='volume',
+                                     use_ewald=True,use_inv_r=False,eta=None);
+    # Filter structures to those that map to the lattice
+    ValidStrs = []
+    for CalcInd, Calc in enumerate(CalcData):
+        print('{}/{} ({})'.format(CalcInd,len(CalcData),Calc['name']))
+        try:
+            Str=Structure.from_dict(Calc['s']); CE.corr_from_structure(Str);
+            ValidStrs.append(Calc);
+        except: print("\tToo far off lattice, throwing out."); continue;
+    print("{}/{} structures map to the lattice".format(len(valid_structs), len(calc_data)))
+    # Fit expansion
+    ECIG=EciGenerator.unweighted(cluster_expansion=CE,
+                                 structures=[Structure.from_dict(Calc['s']) for Calc in ValidStrs],
+                                 energies=[Calc['toten'] for Calc in ValidStrs],\
+                                 max_dielectric=100,max_ewald=3);
+    print("RMSE: {} eV/prim".format(ECIG.rmse)); dumpfn(ECIG,OutFile);
+
+def _dedup(StrLst):
     """
-    This tool function helps to read the charge from a given specie(in string format).
+    Deduplicate list of structures by structure matching.
     """
-    #print(ion)
-    if ion[-1]=='+':
-        return int(ion[-2]) if ion[-2].isdigit() else 1
-    elif ion[-1]=='-':
-        #print(ion[-2])
-        return int(-1)*int(ion[-2]) if ion[-2].isdigit() else -1
-    else:
-        return 0
+    for i, Str in enumerate(SLst):
+        try: Str['s'] = Structure.from_dict(Str['s']);
+        except: print("Error!");print(Str['s']);raise ValueError("Dedup error");
+    ULst=[];
+    SM=StructureMatcher(stol=0.1, ltol=0.1, angle_tol=1, comparator=ElementComparator())
+    for i, Str in enumerate(SLst):
+        Unique=True;
+        for j, UStr in enumerate(ULst):
+            if sm.fit(Str['s'], UStr['s']): Unique=False; break;
+        if Unique: ULst.append(UStr);
+    for UStr in ULst: UStr['s'] = UStr['s'].as_dict();
+    return ULst;
 
-def _factors(n):
+def _assign_ox_states(Str,Mag):
     """
-    This function take in an integer n and computes all integer multiplicative factors of n
+    Aassign oxidation states based on magnetic moments taken from the OUTCAR.
+    Reference magnetic moments obtained by looking at a bunch of structures.
 
+    DOES NOT CHECK THAT THE ASSIGNMENT IS CHARGE BALANCED!
+    Args:
+        Str: structure
+        Mag: list of magnetic moments for the sites in s
     """
-    return set(reduce(list.__add__,
-                      ([i, n // i] for i in range(1, int(n ** 0.5) + 1) if n % i == 0)))
+    # Oxidation states corresponding to a range of magnetic moments (min, max)
+    ###OXRange imported from OxData.py
+    DefaultOx={'Li':1,'F':-1,'O':-2}; OxLst=[];
+    for SiteInd,Site in enumerate(Str.Sites):
+        Assigned=False;
+        if Site.species_string in OXRange.keys():
+            for (MinMag,MaxMag),MagOx in OXRange[Site.species_string].items():
+                if Mag[SiteInd]>=MinMag and Mag[SiteInd]<MaxMag:
+                    OxLst.append(MagOx); Assigned=True; break;
+        elif Site.species_string in DefaultOx.keys():
+            OxLst.append(DefaultOx[Site.species_string]); Assigned=True;
+        if not Assigned:
+            print("Cant assign ox states for site={}, mag={}".\
+                    format(Site,Mag[SiteInd])); assert Assigned;
+    Str.add_oxidation_state_by_site(OxLst);
+    return Str;
 
-def _Get_Hermite_Matricies(Num):
+def load_data(LoadDirs,OutFile):
     """
-    This function take in an integer and computes all
-    Hermite normal matricies with determinant equal to this integer
-    All random real matrices can be transformed into a upper-triangle matrix by unitary
-    transformations.
-    Note:
-    clustersupercell.supercell_from_sc does not take an np.matrix! It takes a matrix-like
-    3*3 list!!!
+    Args:
+        LoadDirs: List of directories to search for VASP runs
+        OutFile: Savefile
     """
-    Mats = []; Factors = list(_factors(Num)); Factors *= 3;
-    for Perm in set(permutations(Factors, 3)):
-        if reduce(mul, Perm) == Num:
-            Mat = np.array([[Perm[0], 0, 0], [0, Perm[1], 0], [0, 0, Perm[2]]])
-            Perms2 = set(permutations(np.tile(np.arange(Perm[2]), 2), 2))
-            Num_list = np.arange(Perm[1]);
-            for Num2 in Num_list:
-                for Perm2 in Perms2:
-                    Mat[0, 1] = Num2; Mat[0:2, 2] = Perm2; LMat = Mat.tolist();
-                    if LMat not in Mats: Mats.append(LMat);
-    return Mats;
+    Data=[];
+    # Load VASP runs from given directories
+    for LoadDir in LoadDirs:
+        for Root,Dirs,Files in os.walk(LoadDir):
+            if "OSZICAR" in Files and 'CONTCAR' in Files and 'OUTCAR' in Files\
+                    and '3.double_relax' in Root:
+                try:
+                    Name=os.sep.join(Root.split(os.sep)[0:-1]);
+                    Str=Poscar.from_file(os.path.join(Root,"CONTCAR")).structure
+                    ValidComp=True;
+                    for Ele in Str.composition.element_composition.elements:
+                        if str(Ele) not in ['Li', 'Mn', 'O', 'F']: ValidComp=False;break;
+                    if not ValidComp: continue;
+                    print("Loading VASP run in {}".format(Root));
+                    # Rescale volume to that of unrelaxed structure
+                    OStr=Poscar.from_file(os.path.join(os.sep.join(Root.split(os.sep)[0:-2]),"POSCAR")).structure
+                    OVol=OStr.volume; VolScale=(OVol/Str.volume)**(1.0/3.0);
+                    Str=Structure(lattice=Lattice(Str.lattice.matrix*VolScale),
+                            species=[Site.specie for Site in Str.sites],
+                            coords=[Site.frac_coords for Site in Str.sites]);
+                    # Assign oxidation states to Mn based on magnetic moments in OUTCAR
+                    Out=Outcar(os.path.join(Root,'OUTCAR')); Mag=[];
+                    for SiteInd,Site in enumerate(Str.sites):
+                        Mag.append(np.abs(Out.magnetization[SiteInd]['tot']));
+                    Str=_assign_ox_states(Str,Mag);
+                    # Throw out structures where oxidation states don't make sense
+                    if np.abs(Str.charge)>0.1:
+                        print(Str);print("Not charge balanced .. skipping");continue;
+                    # Get final energy from OSZICAR or Vasprun. Vasprun is better but OSZICAR is much
+                    # faster and works fine is you separately check for convergence, sanity of
+                    # magnetic moments, structure geometry
+                    if VASPRUN: TotE=float(Vasprun(os.path.join(Root, "vasprun.xml")).final_energy);
+                    else: TotE=Oszicar(os.path.join(Root, 'OSZICAR')).final_energy;
+                    # Make sure run is converged
+                    with open(os.path.join(Root,'OUTCAR')) as OutFile: OutStr=OutFile.read();
+                    assert "reached required accuracy" in OutStr; Comp=Str.composition;
+                    Data.append({'s':Str.as_dict(),'toten':TotE,'comp':Comp.as_dict(),\
+                        'path':Root,'name':Name});
+                except: print("\tParsing error - not converged?")
+    # Deduplicate data
+    UData = _dedup(Data);
+    with open(OutFile,"w") as Fid: Fid.write(json.dumps(UData));
 
-def _mat_mul(mat1,mat2):
-    A = np.matrix(mat1)
-    B = np.matrix(mat2)
-    return (A*B).tolist()
-
-def _FindSpecieSite(specie,occuDict):
-    for site in occuDict:
-        if specie in occuDict[site]: return site
-
-def _Modify_Specie(specie):
-    if not specie[-2].isdigit():
-        specie = specie[:-1]+'1'+specie[-1]
-    return specie
-
-def _Back_Modify(specie):
-    if specie[-2]=='1':
-        specie = specie[:-2]+specie[-1]
-    return specie
-
-def _Is_Neutral_Occu(occu,specieChgDict):
-    totalChg = 0
-    for site in occu:
-        for specie in site:
-            totalChg += site[specie]*specieChgDict[specie]
-    return totalChg==0
-
-##################################
-## Less general tools that are not cross refered by other modules
-##################################
 def _get_ind_groups(Bits,Cations,Anions):
     """
     Define sublattices for monte carlo flips
@@ -130,28 +178,7 @@ def _get_ind_groups(Bits,Cations,Anions):
     i2 = [i for i, b in enumerate(Bits) if sorted(b) == sorted(Anions)];
     return i1, i2;
 
-def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
-    '''
-    Enumerate all possible supercell matrices and pick 10 random unskewd scs 
-    and 10 skewed scs from enumeration.
-    '''
-    print('#### Supercell Enumeration ####')
-    scs=[]
-    for det in range(int(maxDet/4),maxDet+1,int(maxDet/4)):
-        scs.extend(_Get_Hermite_Matricies(det))
-    print('Generated %d supercell matrices with max determinant %d'%(len(scs),maxDet))
-    #print('Supercell Matrices:\n',scs)
-    print('Picking %d random skew supercells and %d random rectangular supercells.'%(nSk,nRect))
-    _is_diagonal = lambda sc: (sc[0][1]==0 and sc[0][2]==0 and sc[1][2]==0)
-    scs_sk = [sc for sc in scs if not _is_diagonal(sc)]
-    scs_re = [sc for sc in scs if _is_diagonal(sc)]
-    selected_scs = random.sample(scs_sk,nSk)+random.sample(scs_re,nRect)
-    #print("scs before trans:",selected_scs)
-    if transmat:
-        selected_scs=[_mat_mul(sc,transmat) for sc in selected_scs]
-    return selected_scs
-
-def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,TLst=[500, 1500, 10000]):
+def get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,TLst=[500, 1500, 10000]):
     '''For CE sampling using MC, use three set of temperature, merge this with LocalOrdering code
        CEFile: directory of CE Mson data file
        CalcFiles: directory of vasp calculation Mson data files
@@ -354,7 +381,30 @@ def _write_vasp_inputs(Str,VASPDir):
         if Sym == 'Zr': POTSyms[i]='Zr_sv';
     Potcar(POTSyms,functional='PBE').write_file(os.path.join(VASPDir,'POTCAR'));
 
-def _gen_vasp_inputs(SearchDir):
+def run_vasp(RunDir):
+    """
+    Run vasp for all structures under RunDir.
+    """
+    absRunDir = os.path.abspath(RunDir)
+    parentDir = os.path.dirname(absRunDir)
+    POSDirs=[];
+    _is_VASP_Input = lambda files: ('INCAR' in files) and \
+                     ('POSCAR' in files) and ('POTCAR' in files)\
+                     and ('KPOINTS' in files)
+
+    for Root,Dirs,Files in os.walk(RunDir):
+        if _is_VASP_Input(Files) and 'fm' in Root: POSDirs.append(Root);
+    for Root in POSDirs:
+        runRoot = os.path.abspath(Root)
+        os.chdir(runRoot)
+        print("Submitting VASP for {}".format(os.getcwd()))
+        os.system("qsub "+parentDir+"/sub.sh")
+        print("Submitted VASP for {}".format(os.getcwd()))
+        os.chdir(parentDir)
+    print('Submission works done.')
+
+
+def gen_vasp_inputs(SearchDir):
     """
     Search through directories, find POSCARs and generate FM VASP inputs.
     """
@@ -367,7 +417,113 @@ def _gen_vasp_inputs(SearchDir):
         Str=Poscar.from_file(os.path.join(Root,File)).structure
         VASPDir= os.path.join(Root,'fm.0'); _write_vasp_inputs(Str,VASPDir);
 
-def _supercells_from_compounds(maxSize,prim,compounds,enforceOccu=None,sampleStep=1,supercellnum=1,transmat=None):
+def _get_converged_E_at_T(T,ECIs=None,cluster_supercell=None, init_occu=None, init_e=None, ind_groups=None):
+    """
+    Utility function for running MC in parallel load from LocalStructureAnalyzer
+    """
+    print("\t Running T = {}K".format(T))
+    occu, min_occu, min_e, energies = run_T(ecis=ecis,
+                                            cluster_supercell=cluster_supercell,
+                                            occu=deepcopy(init_occu),
+                                            T=T,
+                                            n_loops=2000000,
+                                            ind_groups=ind_groups,
+                                            n_rand=0,
+                                            check_unique=False,
+                                            sample_energies=10000)
+    return [T, energies, min_e, min_occu]
+
+def _GetIonChg(ion):
+    """
+    This tool function helps to read the charge from a given specie(in string format).
+    """
+    #print(ion)
+    if ion[-1]=='+':
+        return int(ion[-2]) if ion[-2].isdigit() else 1
+    elif ion[-1]=='-':
+        #print(ion[-2])
+        return int(-1)*int(ion[-2]) if ion[-2].isdigit() else -1
+    else:
+        return 0
+
+def _factors(n):
+    """
+    This function take in an integer n and computes all integer multiplicative factors of n
+
+    """
+    return set(reduce(list.__add__,
+                      ([i, n // i] for i in range(1, int(n ** 0.5) + 1) if n % i == 0)))
+
+def _Get_Hermite_Matricies(Num):
+    """
+    This function take in an integer and computes all
+    Hermite normal matricies with determinant equal to this integer
+    All random real matrices can be transformed into a upper-triangle matrix by unitary
+    transformations.
+    Note:
+    clustersupercell.supercell_from_sc does not take an np.matrix! It takes a matrix-like
+    3*3 list!!!
+    """
+    Mats = []; Factors = list(_factors(Num)); Factors *= 3;
+    for Perm in set(permutations(Factors, 3)):
+        if reduce(mul, Perm) == Num:
+            Mat = np.array([[Perm[0], 0, 0], [0, Perm[1], 0], [0, 0, Perm[2]]])
+            Perms2 = set(permutations(np.tile(np.arange(Perm[2]), 2), 2))
+            Num_list = np.arange(Perm[1]);
+            for Num2 in Num_list:
+                for Perm2 in Perms2:
+                    Mat[0, 1] = Num2; Mat[0:2, 2] = Perm2; LMat = Mat.tolist();
+                    if LMat not in Mats: Mats.append(LMat);
+    return Mats;
+
+def _mat_mul(mat1,mat2):
+    A = np.matrix(mat1)
+    B = np.matrix(mat2)
+    return (A*B).tolist()
+
+def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
+    '''
+    Enumerate all possible supercell matrices and pick 10 random unskewd scs 
+    and 10 skewed scs from enumeration.
+    '''
+    print('#### Supercell Enumeration ####')
+    scs=[]
+    for det in range(int(maxDet/4),maxDet+1,int(maxDet/4)):
+        scs.extend(_Get_Hermite_Matricies(det))
+    print('Generated %d supercell matrices with max determinant %d'%(len(scs),maxDet))
+    #print('Supercell Matrices:\n',scs)
+    print('Picking %d random skew supercells and %d random rectangular supercells.'%(nSk,nRect))
+    _is_diagonal = lambda sc: (sc[0][1]==0 and sc[0][2]==0 and sc[1][2]==0)
+    scs_sk = [sc for sc in scs if not _is_diagonal(sc)]
+    scs_re = [sc for sc in scs if _is_diagonal(sc)]
+    selected_scs = random.sample(scs_sk,nSk)+random.sample(scs_re,nRect)
+    #print("scs before trans:",selected_scs)
+    if transmat:
+        selected_scs=[_mat_mul(sc,transmat) for sc in selected_scs]
+    return selected_scs
+
+def _FindSpecieSite(specie,occuDict):
+    for site in occuDict:
+        if specie in occuDict[site]: return site
+
+def _Modify_Specie(specie):
+    if not specie[-2].isdigit():
+        specie = specie[:-1]+'1'+specie[-1]
+    return specie
+
+def _Back_Modify(specie):
+    if specie[-2]=='1':
+        specie = specie[:-2]+specie[-1]
+    return specie
+
+def _Is_Neutral_Occu(occu,specieChgDict):
+    totalChg = 0
+    for site in occu:
+        for specie in site:
+            totalChg += site[specie]*specieChgDict[specie]
+    return totalChg==0
+
+def Supercells_From_Compounds(maxSize,prim,compounds,enforceOccu=None,sampleStep=1,supercellnum=1,transmat=None):
     #Warning: Currently assumes a specie only occupies one site.
     '''
     In this function supercell replacement maps are no longer enumerated by site occupation, but
@@ -529,28 +685,72 @@ def _supercells_from_compounds(maxSize,prim,compounds,enforceOccu=None,sampleSte
     #print(SCLst)
     return SCLst
 
-class StructureGenerator(MSONable):
-    def __init__(prim, enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=[[1,0,0],[0,1,0],[0,0,1]],ce_file = None, vasp_dir = None)
-        """
-        prim: The structure to build a cluster expasion on. In our current 
-              version, prim must be a pyabinitio.core.Structure object, and
-              each site in prim is considered to be the origin of an 
-              independent sublattice. In MC enumeration and GS
-              solver, composition conservation is done on each sublattice,
-              and no specie exchange is allowed between sublattices. For
-              example, Li+ might occupy both O and T sites in spinel 
-              structures, they can be swapped between O and T without
-              breaking conservation of composition, but in our program this
-              kind of flipping will not be allowed. If you want to consider
-              Li+ distribution over O and T, you should enumerate Li+ on O
-              sublattice and T sublattice independently.
-        enforced_occu: This specifies the lowest total occupation ratio of               a sublattice. In the form of: [0.0,1.0,1.0,1.0], which means
-              site #2,3,4 must be fully occupied while site 1 has no special 
-              constraint.
-        
-        """
-        self.prim = prim
-        if self.enforced_occu:
-            print("Occupation on each site at least:",enforced_occu)
-        self.enforced_occu = enforced_occu
-        self.comp_axis = comp_axis
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--load', help="Load vasp runs", type=str, default=None, nargs='+')
+    parser.add_argument('--vasp', help="JSON files with saved VASP outputs", type=str, nargs='+')
+    parser.add_argument('--ce', help="JSON file of current CE", type=str, default=None)
+    parser.add_argument('--fit', help="Fit CE based on VASP outputs", action='store_true')
+    parser.add_argument('--prim', help="cif file of primitive cell(for CE fitting)", type=str, default=None)
+    parser.add_argument('--getmc', help="Generate MC structures from this CE", action='store_true')
+    parser.add_argument('--supercellnum',help="Number of skewed and unskewed supercells to sample",type=int,default=10)
+    parser.add_argument('--transmat',help="Transformation matrix to prim, if it is possible to make your prim more symmetric",\
+                       type=int,nargs='+',default=None)
+    parser.add_argument('--compounds',help="Compounds to enumerate. Example:--compunds='LiCoO2,LiF,Li2CoO2'",\
+                       type=str, default=None)
+    parser.add_argument('--enforceoccu',help='''Minimum required occupation fraction for each site. Site refered to by
+                      index. Example: --enforceoccu='{"0":0.0,"1":1.0,"2":1.0,"3":1.0}'. ''',type=str,default=None)
+    parser.add_argument('--samplestep',help="Sampling step of sublattice sites.",type=int,default=1)
+    parser.add_argument('--scs', help="Max supercell matrix determinant to be enumerated(must be integer)",\
+                       type=int)
+    parser.add_argument('--tlst', help="Temperature list", type=int, nargs='+');
+    parser.add_argument('--complst', help="Composition list to be simulated[xNb,xF]", type=str,nargs='+');
+    parser.add_argument('--vaspinputs', help="Generate compatible VASP inputs for this directory", type=str, default=None)
+    parser.add_argument('--vasprun',help="Run vasp for all structures under this directory",type=str,default=None)
+    parser.add_argument('-o', help="Output filename (json file or dir)", default=None)
+    args = parser.parse_args()
+    import time
+
+    start_time = time.time()
+    
+    if args.vaspinputs: gen_vasp_inputs(args.vaspinputs)
+    
+    elif args.vasprun:
+        run_vasp(args.vasprun)
+
+    elif args.load:
+        DirLst = args.load;
+        load_data(DirLst, args.o, wmg=args.mg)
+
+    elif args.fit:
+        primData = CifParser(args.prim)
+        prim = primData.get_structures()[0]
+        fit_ce(args.vasp, prim, args.o)
+
+    elif args.getmc:
+        primData = CifParser(args.prim)
+        prim = primData.get_structures()[0]
+
+        enforceoccu=json.loads(args.enforceoccu)
+        enforceoccuNew = {}
+        for key in enforceoccu:
+            enforceoccuNew[int(key)]=float(enforceoccu[key])
+
+        compounds = args.compounds.split(',')
+        supercells = []
+        if len(args.transmat)==9:
+            tm=args.transmat
+            transmat=[[tm[0],tm[1],tm[2]],[tm[3],tm[4],tm[5]],[tm[6],tm[7],tm[8]]]
+            print("Using pre-transformation matrix:",transmat)
+        else:
+            print("Warning: transformation matrix wasn't set. Using no pre-transformation to primitive cell!")
+            transmat=None
+        supercells.extend(Supercells_From_Compounds(args.scs,prim.get_sorted_structure(),compounds,\
+                              enforceoccuNew,args.samplestep,args.supercellnum,transmat))
+        #supercells is now a list of (sc,ro,composition)
+        if not args.ce:
+            get_mc_structs(args.ce, args.vasp, args.o, supercells,Prim=prim.get_sorted_structure())
+        else:
+            get_mc_structs(args.ce, args.vasp, args.o, supercells)
+
+    print("--- %s seconds ---" % (time.time() - start_time))
