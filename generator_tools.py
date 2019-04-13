@@ -137,8 +137,9 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
     '''
     print('#### Supercell Enumeration ####')
     scs=[]
+    trans_size = int(abs(np.linalg.det(transmat)))
     for det in range(int(maxDet/4),maxDet+1,int(maxDet/4)):
-        scs.extend(_Get_Hermite_Matricies(det))
+        scs.extend(_Get_Hermite_Matricies(int(det/trans_size)))
     print('Generated %d supercell matrices with max determinant %d'%(len(scs),maxDet))
     #print('Supercell Matrices:\n',scs)
     print('Picking %d random skew supercells and %d random rectangular supercells.'%(nSk,nRect))
@@ -367,7 +368,7 @@ def _gen_vasp_inputs(SearchDir):
         Str=Poscar.from_file(os.path.join(Root,File)).structure
         VASPDir= os.path.join(Root,'fm.0'); _write_vasp_inputs(Str,VASPDir);
 
-def _supercells_from_compounds(maxSize,prim,compounds,enforceOccu=None,sampleStep=1,supercellnum=1,transmat=None):
+def _supercells_from_compounds(maxSize,prim,comp_axis=None,enforceOccu=None,sampleStep=1,supercellnum=1,transmat=[[1,0,0],[0,1,0],[0,0,1]]):
     #Warning: Currently assumes a specie only occupies one site.
     '''
     In this function supercell replacement maps are no longer enumerated by site occupation, but
@@ -411,7 +412,8 @@ def _supercells_from_compounds(maxSize,prim,compounds,enforceOccu=None,sampleSte
             siteOccuMod[specieMod]=float(siteOccu[specie])
         occuDicts.append(siteOccuMod)
     #print(occuDicts)
-
+    
+    ###!Move this to a separated function!
     compSpecieNums = {}
     # Get representative specie in a compound to make a calculation of composition from site enumeration easier.
     compUniqSpecies = {}
@@ -532,25 +534,31 @@ def _supercells_from_compounds(maxSize,prim,compounds,enforceOccu=None,sampleSte
 class StructureGenerator(MSONable):
     def __init__(prim, enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=[[1,0,0],[0,1,0],[0,0,1]],ce_file = None, vasp_dir = None)
         """
-        prim: The structure to build a cluster expasion on. In our current 
-              version, prim must be a pyabinitio.core.Structure object, and
-              each site in prim is considered to be the origin of an 
-              independent sublattice. In MC enumeration and GS
-              solver, composition conservation is done on each sublattice,
-              and no specie exchange is allowed between sublattices. For
-              example, Li+ might occupy both O and T sites in spinel 
-              structures, they can be swapped between O and T without
-              breaking conservation of composition, but in our program this
-              kind of flipping will not be allowed. If you want to consider
-              Li+ distribution over O and T, you should enumerate Li+ on O
-              sublattice and T sublattice independently.
-        enforced_occu: This specifies the lowest total occupation ratio of               a sublattice. In the form of: [0.0,1.0,1.0,1.0], which means
-              site #2,3,4 must be fully occupied while site 1 has no special 
-              constraint.
-        
+        prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
+              rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
+              each sublattice, and no specie exchange is allowed between sublattices. For example, Li+ might occupy both O and T sites in spinel 
+              structures, they can be swapped between O and T without breaking conservation of composition, but in our program this kind of flipping 
+              will not be allowed. If you want to consider Li+ distribution over O and T, you should enumerate Li+ on O sublattice and T sublattice 
+              independently.
+        enforced_occu: This specifies the lowest total occupation ratio of a sublattice. In the form of: [0.0,1.0,1.0,1.0], which means site #2,3,4 
+              must be fully occupied while site 1 has no special constraint.
+        sample_step: Enumeration step of species on sublattices. sample_step = 2 means that 2 atoms will be changed at each step during occupation 
+              enumeration.
+        max_sc_size: Maximum supercell size to enumerate, in determinant of supercell. 
+        sc_selec_enum: Number of skewed and unskewed supercells to randomly select from enumeration.
+        comp_axis: We provide a fucntion here to transform an occupation representation into composition in compound ratio, for your convedience to 
+              drawing phase diagrams. By default the composition is not decomposed since your systems can oftenly get too complexed. The occupation
+              will be stored in CEfile and also under all subdirectories of calculations.
+              Form of an occupation to store: [{'Li+':2,'Co3+':2,'Co4+':6,'Vac':6},{'O2-':16}]
+        transmat: Sometimes your primitive cell is not symmetric enough, just like the case in the 2-site rhombohedral primitive cell of rock salt.
+              You can apply a transformation before shape enumeration.
         """
         self.prim = prim
         if self.enforced_occu:
             print("Occupation on each site at least:",enforced_occu)
         self.enforced_occu = enforced_occu
+        self.sample_step=sample_step
+        self.max_sc_size=max_sc_size
+        self.sc_selec_num=sc_selec_num
         self.comp_axis = comp_axis
+        self.transmat = transmat
