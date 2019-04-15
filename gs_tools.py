@@ -17,6 +17,8 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer, SymmOp
 from pymatgen.util.coord import coord_list_mapping_pbc
 from pymatgen import Structure,PeriodicSite
 
+from global_tools import *
+
 __author__ = "Fengyu Xie"
 __version__ = "2019.0.0"
 
@@ -32,77 +34,6 @@ down to 16 sites."
 #####
 # Tool functions
 #####
-def _GCD(a,b):
-	""" The Euclidean Algorithm """
-    a = abs(a)
-    b = abs(b)
-    while a:
-        a, b = b%a, a
-    return b    
-        
-def _GCD_List(lst):
-	""" Finds the GCD of numbers in a list.
-	Input: List of numbers you want to find the GCD of
-		E.g. [8, 24, 12]
-	Returns: GCD of all numbers, 4 
-	"""
-    return reduce(_GCD, lst)
-
-def _factors(n):
-    """
-    This function take in an integer n and computes all integer multiplicative factors of n
-
-    """
-    return set(reduce(list.__add__,
-                      ([i, n // i] for i in range(1, int(n ** 0.5) + 1) if n % i == 0)))
-
-def _enumerate_mat(Num):
-    Mats = []; Factors = list(_factors(Num)); Factors *= 3;
-    for Perm in set(permutations(Factors, 3)):
-        if reduce(mul, Perm) == Num:
-            Mat = np.array([[Perm[0], 0, 0], [0, Perm[1], 0], [0, 0, Perm[2]]])
-            Perms2 = set(permutations(np.tile(np.arange(Perm[2]), 2), 2))
-            Num_list = np.arange(Perm[1]);
-            for Num2 in Num_list:
-                for Perm2 in Perms2:
-                    Mat[0, 1] = Num2; Mat[0:2, 2] = Perm2; LMat = Mat.tolist();
-                    if LMat not in Mats: Mats.append(LMat)
-    return Mats
-
-def _matmul(mat1,mat2):
-    A = np.matrix(mat1)
-    B = np.matrix(mat2)
-    return (A*B).tolist()
-
-def get_bits(structure):
-    """
-    Helper method to compute list of species on each site.
-    Includes vacancies
-    """
-    all_bits = []
-    for site in structure:
-        bits = []
-        for sp in sorted(site.species_and_occu.keys()):
-            bits.append(str(sp))
-        if site.species_and_occu.num_atoms < 0.99:
-            bits.append("Vacancy")
-       #bits.append("Vacancy")
-        all_bits.append(bits)
-    return all_bits
-
-def _GetIonChg(ion):
-    """
-    This tool function helps to read the charge from a given specie(in string format).
-    """
-    #print(ion)
-    if ion[-1]=='+':
-        return int(ion[-2]) if ion[-2].isdigit() else 1
-    elif ion[-1]=='-':
-        #print(ion[-2])
-        return int(-1)*int(ion[-2]) if ion[-2].isdigit() else -1
-    else:
-        return 0
-
 def _map_symops(exp_str,symops):
     """
         Generate a mapping to indices of symmetry manipulations.
@@ -153,7 +84,7 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
                 if site.species_and_occu.num_atoms < 0.99 or len(site.species_and_occu) > 1]
     exp_str = Structure.from_sites(exp_sites)
     #print("exp_str",exp_str)
-    bits = get_bits(exp_str)
+    bits = _get_bits(exp_str)
     nbits = np.array([len(b) - 1 for b in bits])
 
     #ce_test = ClusterExpansion.from_radii(exp_str,{2:7.0})
@@ -331,12 +262,12 @@ class GScanonical(MSONable):
 
             for size in enumrange:
                 print("Enumerating for size %d"%size)
-                _enumlist.extend(_enumerate_mat(int(size/scale)))
+                _enumlist.extend(_Get_Hermite_Matrices(int(size/scale)))
 
             print("Randomly picking supercell matrices.")
             self._enumlist=random.sample(_enumlist,self.selec)
             if self.transmat: 
-                self._enumlist=[_matmul(sc,self.transmat) for sc in self._enumlist]
+                self._enumlist=[_mat_mul(sc,self.transmat) for sc in self._enumlist]
             self._enumlist=sorted(self._enumlist,key=lambda a:(abs(np.linalg.det(a)),\
                                  np.linalg.norm(a[0]),np.linalg.norm(a[1]),np.linalg.norm(a[2])))
             print("Enumerated supercells generated!")
@@ -391,7 +322,7 @@ class GScanonical(MSONable):
                     H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
 
                     #Ewald energy E_ew = (q+r)*H*(q+r)'. I used a stupid way to get H but quite effective.
-                    supbits = get_bits(clus_sup_new.supercell)
+                    supbits = _get_bits(clus_sup_new.supercell)
                     r = np.array([_GetIonChg(bits[-1]) for bits in supbits])
                     chg_bits = [[_GetIonChg(bit)-_GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
                     b_clusters = []
@@ -606,7 +537,7 @@ class GScanonical(MSONable):
 
         ce_new = self.ces_new[mat_id]
         cs = ce_new.supercell_from_matrix(self.enumlist[mat_id])
-        cs_bits = get_bits(cs.supercell)
+        cs_bits = _get_bits(cs.supercell)
         upper_sites = []
         for s,site in enumerate(site_specie_ids):
             should_be_ref = True

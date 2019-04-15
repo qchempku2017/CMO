@@ -30,94 +30,10 @@ from itertools import permutations,product
 from operator import mul
 from functools import partial,reduce
 import multiprocessing
-from mc import *
-from OxData import OXRange #This should be a database like file
 import collections
 
-###################################
-#One example of OXRange we use is given below:
-ox_ranges = {'Mn': {(0.5, 1.5): 2,
-            (1.5, 2.5): 3,
-            (2.5, 3.4): 4,
-            (3.4, 4.05): 3,
-            (4.05, 5.0): 2}};
-#The way it works is really emperical but we did not find a generalized way to
-#correlate charge states with magnetism. Maybe we can automate a self consistent routine
-#to check the check balance during VASP caculation loading and pick a best one. Or just 
-#Pre-calculate it and make it into a data file like json or yaml (works like the DFT+U paprameters);
-##################################
-
-##################################
-## General tools that will be frequently cross referenced
-##################################
-def _GetIonChg(ion):
-    """
-    This tool function helps to read the charge from a given specie(in string format).
-    """
-    #print(ion)
-    if ion[-1]=='+':
-        return int(ion[-2]) if ion[-2].isdigit() else 1
-    elif ion[-1]=='-':
-        #print(ion[-2])
-        return int(-1)*int(ion[-2]) if ion[-2].isdigit() else -1
-    else:
-        return 0
-
-def _factors(n):
-    """
-    This function take in an integer n and computes all integer multiplicative factors of n
-
-    """
-    return set(reduce(list.__add__,
-                      ([i, n // i] for i in range(1, int(n ** 0.5) + 1) if n % i == 0)))
-
-def _Get_Hermite_Matricies(Num):
-    """
-    This function take in an integer and computes all
-    Hermite normal matricies with determinant equal to this integer
-    All random real matrices can be transformed into a upper-triangle matrix by unitary
-    transformations.
-    Note:
-    clustersupercell.supercell_from_sc does not take an np.matrix! It takes a matrix-like
-    3*3 list!!!
-    """
-    Mats = []; Factors = list(_factors(Num)); Factors *= 3;
-    for Perm in set(permutations(Factors, 3)):
-        if reduce(mul, Perm) == Num:
-            Mat = np.array([[Perm[0], 0, 0], [0, Perm[1], 0], [0, 0, Perm[2]]])
-            Perms2 = set(permutations(np.tile(np.arange(Perm[2]), 2), 2))
-            Num_list = np.arange(Perm[1]);
-            for Num2 in Num_list:
-                for Perm2 in Perms2:
-                    Mat[0, 1] = Num2; Mat[0:2, 2] = Perm2; LMat = Mat.tolist();
-                    if LMat not in Mats: Mats.append(LMat);
-    return Mats;
-
-def _mat_mul(mat1,mat2):
-    A = np.matrix(mat1)
-    B = np.matrix(mat2)
-    return (A*B).tolist()
-
-def _FindSpecieSite(specie,occuDict):
-    for site in occuDict:
-        if specie in occuDict[site]: return site
-
-def _Modify_Specie(specie):
-    if not specie[-2].isdigit():
-        specie = specie[:-1]+'1'+specie[-1]
-    return specie
-
-def _Back_Modify(specie):
-    if specie[-2]=='1':
-        specie = specie[:-2]+specie[-1]
-    return specie
-
-def _Is_Neutral_Occu(occu,specieChgDict):
-    totalChg = 0
-    for site in occu:
-        for specie in site:
-            totalChg += site[specie]*specieChgDict[specie]
-    return abs(totalChg)<0.001
+from mc import *
+from global_tools import *
 
 ##################################
 ## Less general tools that are not cross refered by other modules
@@ -152,7 +68,7 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
         selected_scs=[_mat_mul(sc,transmat) for sc in selected_scs]
     return selected_scs
 
-def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,TLst=[500, 1500, 10000]):
+def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,all_axis=None,TLst=[500, 1500, 10000]):
     '''For CE sampling using MC, use three set of temperature, merge this with LocalOrdering code
        CEFile: directory of CE Mson data file
        CalcFiles: directory of vasp calculation Mson data files
@@ -172,6 +88,7 @@ def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,TLst=[500, 1500, 100
                 with open(CalcFile,'r') as Fid: CalcData.extend(json.loads(Fid.read()));
         else: print("Not checking versus previous calculations")
         CE=ECIG.ce; ECIs=deepcopy(ECIG.ecis); print('ce information:'); print(ce.structure);
+        Prim = ce.structure
     else:
         # No existing cluster expansion - use electrostatics only
         CalcData=[];
@@ -181,21 +98,19 @@ def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,TLst=[500, 1500, 100
         print('Primitive cell read from CIF file:\n',Prim)
 
     mc_structs={};
+    if all_axis:
+        ro_axis_strings = {}
 
-    for SC,RO,composition,sites_WorthToExpand in SCLst:
-        compositionFrac = {}
-        totMole = sum(composition.values())
-        for compound in composition:
-            compositionFrac[compound]=float(composition[compound])/totMole
-        print("Processing composition:\n",compositionFrac,'\nSupercell:\n',SC,'\nsize:\n',int(round(np.abs(np.linalg.det(SC)))))
-
+    sc_ro_pair_id = 0
+    for SC,RO,sites_WorthToExpand in SCLst:
+        print("Processing composition:\n",RO,'\nSupercell:\n',SC,'\nsize:\n',int(round(np.abs(np.linalg.det(SC)))))
         clusSC=CE.supercell_from_matrix(SC);
         #print(clusSC.supercell)
         #print(clusSC.bits)
         # Define cation/anion sublattices
         ions=[]
         for subLat in RO:
-            for specie in RO[subLat]:
+            for specie in sublat:
                 if specie not in ions: ions.append(specie)
         #cations = [_Back_Modify(ion) for ion in ions if (ion[-1]=='+' or (ion[-1]!='+' and ion[-1]!='-'))]
         #cations = cations
@@ -245,21 +160,24 @@ def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,TLst=[500, 1500, 100
         sa_occu = simulated_anneal(ecis=ecis, cluster_supercell=clusSC, occu=init_occu, ind_groups=indGrps,
                                    n_loops=20000, init_T=5100, final_T=100, n_steps=20)
 
-        # Integrate Wenxuan's solver here, and abandon MC annealing.#
-
-        compStr = str()
-        for compound in compositionFrac:
-            compStr+=(compound+'_{0:.3f}_'.format(compositionFrac[compound]))
-        compStr = compStr[:-1]
-        if compStr not in mc_structs:
-            mc_structs[compStr]=[]
+        # Integrate Wenxuan's solver here, and abandon MC annealing. (In the future.)#
+        RO_int = [{specie:int(round(site[specie]*scs)) for specie in site} for site in RO] 
+        #convert frac occupation back to integers.
+        RO_string = json.dumps(RO_int)
+        if RO_string not in mc_structs:
+            mc_structs[RO_string]=[]
+        
+        if all_axis:
+            axis_string = json.dumps(all_axis[sc_ro_pair_id])
+            if RO_string not in ro_axis_strings:
+                ro_axis_strings[RO_string] = axis_string
 
         # Add approximate ground state to set of MC structures
         # Format as (structure, temperature) - for ground state, temperature is "0"
-        mc_structs[compStr].append((clusSC.structure_from_occu(sa_occu),0))
+        mc_structs[RO_string].append((clusSC.structure_from_occu(sa_occu),0))
 
         for T in TLst:
-            print("\t T = {}K".format(T))
+            print("Doing MC under T = {}K".format(T))
             # Equilibration run
             # Play around with the number of MC flips in the run - the current number is very arbitrary
 	    # We can try to implement VO et.al's sampling method here!
@@ -275,9 +193,11 @@ def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,TLst=[500, 1500, 100
             # Check that returned random structures
             # are all different
 	    # Save best structure and a few random structures from the production run
-            mc_structs[compStr].append((clusSC.structure_from_occu(min_occu),T))
+            mc_structs[RO_string].append((clusSC.structure_from_occu(min_occu),T))
             for rand, rand_e in rand_occu:
-                mc_structs[compStr].append((clusSC.structure_from_occu(rand),T))
+                mc_structs[RO_string].append((clusSC.structure_from_occu(rand),T))
+
+        sc_ro_pair_id += 1
 
     # Deduplicate - first versus previously calculated structures, then versus structures within this run
     print('Deduplicating random structures.')
@@ -289,21 +209,21 @@ def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,TLst=[500, 1500, 100
     unique_structs = {}
     unqCnt = 0
     sm = StructureMatcher(ltol=0.3, stol=0.3, angle_tol=5, comparator=ElementComparator())
-    for compStr,structs in mc_structs.items():
-        if compStr not in unique_structs:
-            unique_structs[compStr] = []
+    for RO_string,structs in mc_structs.items():
+        if RO_string not in unique_structs:
+            unique_structs[RO_string] = []
         for struct,T in structs:
             unique = True
             for ostruct in calculated_structures:
                 if sm.fit(struct, ostruct):
                     unique = False
                     break
-            for ostruct,T in unique_structs[compStr]:
+            for ostruct,T in unique_structs[RO_string]:
                 if sm.fit(struct, ostruct):
                     unique = False
                     break
             if unique:
-                unique_structs[compStr].append((struct,T))
+                unique_structs[RO_string].append((struct,T))
                 unqCnt += 1
     print('Obtained %d unique occupied random structures.'%unqCnt)
 
@@ -312,17 +232,30 @@ def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,TLst=[500, 1500, 100
     if not os.path.isdir(OutDir):
         os.mkdir(OutDir)
         print(OutDir,' does not exist. Created.')
-    for compStr,structs in unique_structs.items():
+
+    RO_id = 0
+    for RO_string,structs in unique_structs.items():
+        RODir = 'Composition{}'.format(RO_id)
+        compPathDir = os.path.join(OutDir,RODir)
+        if not os.path.isdir(compPathDir): os.mkdir(compPathDir)
+        occu_file_path = os.path.join(compPathDir,'composition_by_site')
+        if not os.path.isfile(occu_file_path):
+            with open(occu_file_path,'w') as occufile:
+                occufile.write(RO_string)
+        if all_axis:
+            axis_file_path = os.path.join(compPathDir,'axis')
+            if not os.path.isfile(axis_file_path):
+                with open(axis_file_path,'w') as axisfile:
+                    axisfile.write(ro_axis_strings[RO_string])
         for i, (struct,T) in enumerate(structs):
-            compDir = compStr
-            compPathDir = os.path.join(OutDir,compDir)
-            if not os.path.isdir(compPathDir): os.mkdir(compPathDir)
             structDir = os.path.join(compPathDir,str(i))
             if not os.path.isdir(structDir): os.mkdir(structDir)
             Poscar(struct.get_sorted_structure()).write_file(os.path.join(structDir,'POSCAR'))
-    print('Saving of %s successful.'%OutDir)
+        RO_id += 1
 
-def _write_vasp_inputs(Str,VASPDir):
+    print('Saving of %s successful. Writing VASP input files later.'%OutDir)
+
+def _write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vasp_settings=None, strain=[1.01,1.05,1.03]):
     # This is a somewhat strange input set. Essentially the matgen input set (PBE+U), but with tigher
     # convergence.
     # This is also a somewhat outdated and convoluted way to generate VASP inputs but it should work fine.
@@ -332,20 +265,29 @@ def _write_vasp_inputs(Str,VASPDir):
     # This is still using PBE+U with matgen U values though. Need to use MITCompatibility (after the run)
     # to apply oxygen corrections and such.
     # In other expansions that rely on SCAN or HSE, the corrections are different - no O correction for example
+    # In additional_vasp_settings, you can add to, or modify the default VASPsettings.
     VASPSettings={"ALGO": 'VeryFast',"ISYM": 0, "ISMEAR": 0, "EDIFF": 1e-6, "NELM": 400, "NSW": 1000, "EDIFFG": -0.02,
                      'LVTOT': False, 'LWAVE': False, 'LCHARG': False, 'NELMDL': -6, 'NELMIN': 8,
                      'LSCALU': False, 'NPAR': 2, 'NSIM': 2, 'POTIM': 0.25, 'LDAU': True};
+
+    if additional_vasp_settings:
+        for key in additional_vasp_settings:
+            VASPSettings[key]=additional_vasp_settings
+            print('Changed {} setting.'.format(key))
+
     if not os.path.isdir(VASPDir):os.mkdir(VASPDir);
-    # Joggle the lattice to help symmetry broken relaxation
+
+    # Joggle the lattice to help symmetry broken relaxation. You may turn it off by setting strain=None
     FracCoords=[Site.frac_coords for Site in Str.sites];
     Species=[Site.specie for Site in Str.sites]; Latt=Str.lattice;
-    StrainedLatt=Lattice.from_lengths_and_angles([Latt.a*1.01,Latt.b*1.05,Latt.c*1.03],
+    if strain:
+        StrainedLatt=Lattice.from_lengths_and_angles([Latt.a*strain[0],Latt.b*strain[1],Latt.c*strain[2]],
                                                 [Latt.alpha,Latt.beta,Latt.gamma]);
     Str=Structure(StrainedLatt,Species,FracCoords,to_unit_cell=False,coords_are_cartesian=False);
-    VIO=MITRelaxSet(Str,potcar_functional='PBE'); VIO.user_incar_settings=VASPSettings;
+    VIO=MITRelaxSet(Str,potcar_functional = functional); VIO.user_incar_settings=VASPSettings;
     VIO.incar.write_file(os.path.join(VASPDir,'INCAR'));
     VIO.poscar.write_file(os.path.join(VASPDir,'POSCAR'));
-    Kpoints.automatic(25).write_file(os.path.join(VASPDir,'KPOINTS'));
+    Kpoints.automatic(num_kpoints).write_file(os.path.join(VASPDir,'KPOINTS'));
     # Use PAW_PBE pseudopotentials, cannot use PBE_52, this does not exist on ginar!
     # NOTE: For the POTCARs to work, you need to set up the VASP pseudopotential directory as per the
     # pymatgen instructions, and set the path to them in .pmgrc.yaml located in your home folder.
@@ -353,7 +295,7 @@ def _write_vasp_inputs(Str,VASPDir):
     POTSyms=VIO.potcar_symbols;
     for i, Sym in enumerate(POTSyms):
         if Sym == 'Zr': POTSyms[i]='Zr_sv';
-    Potcar(POTSyms,functional='PBE').write_file(os.path.join(VASPDir,'POTCAR'));
+    Potcar(POTSyms,functional=functional).write_file(os.path.join(VASPDir,'POTCAR'));
 
 def _gen_vasp_inputs(SearchDir):
     """
@@ -362,13 +304,13 @@ def _gen_vasp_inputs(SearchDir):
     POSDirs=[];
     for Root,Dirs,Files in os.walk(SearchDir):
         for File in Files:
-            if File == 'POSCAR' and 'fm' not in Root: POSDirs.append([Root,File]);
+            if File == 'POSCAR' and 'fm.0' not in Root: POSDirs.append([Root,File]);
     for [Root,File] in POSDirs:
         print("Writing VASP inputs for {}/{}".format(Root,File));
         Str=Poscar.from_file(os.path.join(Root,File)).structure
         VASPDir= os.path.join(Root,'fm.0'); _write_vasp_inputs(Str,VASPDir);
 
-def _generate_axis(compounds):
+def _generate_axis_ref(compounds):
     """
     Here we do axis decomposition for a chemical formula. Not necessary for complexed systems.
     Inputs:
@@ -422,18 +364,15 @@ def _axis_decompose(comSpecieNums, compUniqSpecies,uniqSpecieComps, occu, sc_siz
     #These two counters are used to prevent unreasonably generated occupations that cannot be matched with any compound.
     specieStat_from_Occu=collections.Counter()
     specieStat_from_Compounds=collections.Counter()
-    fracOccu = []
+
     for s,site in enumerate(occu):
         #print(occu)
-        siteFracOccu = {}
         for specie in occu[s]:
-            siteFracOccu[specie]=occu[s][specie]/sc_size
             specieStat_from_Occu[specie]+=occu[s][specie]
             if specie in uniqSpecieComps:
                 corrCompound = uniqSpecieComps[specie]
                 occuComposition[corrCompound]+=occu[s][specie]/compSpecieNums[corrCompound][specie]
                 #print(occuComposition)
-        fracOccu.append(siteFracOccu)
     for compound in occuComposition:
         for specie in compSpecieNums[compound]:
             specieStat_from_Compounds[specie]+=compSpecieNums[compound][specie]*occuComposition[compound]
@@ -445,10 +384,13 @@ def _axis_decompose(comSpecieNums, compUniqSpecies,uniqSpecieComps, occu, sc_siz
     if not specieNumMatch:
         print('Axis decomposition failed due to mismatch of number of species. Please check your axis compound selection carefully.')
         return
-    
 
+    tot_mol = sum(occuComposition.keys())
+    axis = {compound:occuComposition[compound]/tot_mol for compound in occuComposition}
+    return axis
 
-def _supercells_from_compounds(maxSize,prim,comp_axis=None,enforceOccu=None,sampleStep=1,supercellnum=1,transmat=[[1,0,0],[0,1,0],[0,0,1]]):
+def _supercells_from_compounds(maxSize,prim,enforceOccu=None,sampleStep=1,supercellnum=1,\
+                               comp_axis=None,transmat=[[1,0,0],[0,1,0],[0,0,1]]):
     #Warning: Currently assumes a specie only occupies one site.
     '''
     In this function supercell replacement maps are no longer enumerated by site occupation, but
@@ -517,16 +459,24 @@ def _supercells_from_compounds(maxSize,prim,comp_axis=None,enforceOccu=None,samp
 
         #print(allOccu_for_Sites)
         #Calculate compositions and fractional occupation for each site.
-        allCompositions = []
+        if comp_axis:
+            print('Axis decomposition selected, reference compounds:',comp_axis)
+            compSpecieNums, compUniqSpecies, uniqSpecieComps = _generate_axis_ref(comp_axis)
+            all_axis = []
+
         allFracOccu_for_Sites = []
         occus_WorthToExpand = []
         for occu in allOccu_for_Sites:
             #Check whether the generated composition is a fully occupied and pure compound, and avoid to do CE on that.
+            #Also generate replacement table
             sites_WorthToExpand = []
-            for site in fracOccu:
+            fracOccu = []
+            for site_occu in occu:
+                fracOccu.append({specie:site_occu[specie]/SC_sizes[sc_id] for specie in site_occu})
+            for site_fracoccu in fracOccu:
                 site_WorthToExpand = True
-                for specie in fracOccu[site]:
-                    if abs(fracOccu[site][specie]-1.00)<0.001:
+                for specie in site_fracoccu:
+                    if abs(site_fracoccu[specie]-1.00)<0.001:
                         site_WorthToExpand=False
                         break
                 sites_WorthToExpand.append(site_WorthToExpand)
@@ -536,16 +486,21 @@ def _supercells_from_compounds(maxSize,prim,comp_axis=None,enforceOccu=None,samp
             #print('fracOccu',fracOccu,'Composition',occuComposition)
             if worthToExpand:
                 allFracOccu_for_Sites.append(fracOccu)
-                allCompositions.append(occuComposition)
+                if comp_axis:
+                    all_axis.append(_axis_decompose(comSpecieNums, compUniqSpecies,uniqSpecieComps, \
+                                           occu, SC_sizes[sc_id]))
                 occus_WorthToExpand.append(sites_WorthToExpand)
                 #print(occuComposition,'expanded')
 
-        SCLst.extend(zip([SC]*len(allCompositions),allFracOccu_for_Sites,allCompositions,occus_WorthToExpand))
+        SCLst.extend(zip([SC]*len(allCompositions),allFracOccu_for_Sites,occus_WorthToExpand))
 
         print('Generated %d compositions for supercell '%len(allCompositions),SC,'.')
 
     #print(SCLst)
-    return SCLst
+    if comp_axis:
+        return SCLst,all_axis
+    else:
+        return SCLst,None
 
 class StructureGenerator(MSONable):
     def __init__(prim, enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=[[1,0,0],[0,1,0],[0,0,1]],ce_file = None, vasp_dir = None)
