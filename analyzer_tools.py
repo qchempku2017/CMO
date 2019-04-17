@@ -52,7 +52,9 @@ def _fit_ce(data_file,ce_file, ce_radius=None):
             1, data_file: name of the mson file that stores the primitive cell for the calculation,
             compisitional axis (if any), all the structures (input and relaxed), their energies 
             and compositions. (cluster_expansion object, ecis, and ground state solver informations 
-            will be saved in another mson file, named as ce_file.)
+            will be saved in another mson file, named as ce_file.) These structures are already 
+            assigned charges, and are deduplicated.
+               Recorded in one dictionary.
             2, ce_file: a file to store cluster expansion info, gs info, ecis, etc.
             3, ce_radius: Max cluster radius set up. Only required when no existing ce is present.
         Outputs:
@@ -68,6 +70,7 @@ def _fit_ce(data_file,ce_file, ce_radius=None):
     for CalcInd, Calc in enumerate(calc_data['relaxed_structures']):
         Str=Structure.from_dict(Calc);
         ValidStrs.append(Str);
+    ## These should already have been deduplicated
 
     cnn = CrystalNN()
     nn = cnn.find_nn_info(ValidStrs[0],0)[0]['site']
@@ -108,18 +111,23 @@ def _fit_ce(data_file,ce_file, ce_radius=None):
     print('{} updated.'.format(ce_file))
     
 
-def _dedup(StrLst):
+def _dedup(calc_data_dict):
     """
-    Deduplicate list of structures by structure matching.
+    Deduplicate list of structures by structure matching. Only comparing elements, not species.
     """
-    for i, Str in enumerate(SLst):
-        try: Str['s'] = Structure.from_dict(Str['s']);
-        except: print("Error!");print(Str['s']);raise ValueError("Dedup error");
-    ULst=[];
-    SM=StructureMatcher(stol=0.1, ltol=0.1, angle_tol=1, comparator=ElementComparator())
-    for i, Str in enumerate(SLst):
-        Unique=True;
-        for j, UStr in enumerate(ULst):
+    unique_data_dict={}
+    unique_data_dict['prim'] = calc_data_dict['prim']
+    unique_data_dict['input_structures'] = []
+    unique_data_dict['relaxed_structures'] = []
+    unique_data_dict['total_energies'] = []
+    unique_data_dict['compositions'] = []
+
+    sm = StructureMatcher(stol=0.1, ltol=0.1, angle_tol=1, comparator=ElementComparator())
+    for entry_i, str_data in enumerate(calc_data_dict['relaxed_structures']):
+        is_unique=True;
+        struct = Structure.from_dict(str_data)
+        for entry_j, ustr_data in enumerate(unique_data_dict['relaxed_structures']):
+            ustruct = Structure.from
             if sm.fit(Str['s'], UStr['s']): Unique=False; break;
         if Unique: ULst.append(UStr);
     for UStr in ULst: UStr['s'] = UStr['s'].as_dict();
