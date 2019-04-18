@@ -46,7 +46,7 @@ def _mapping_and_screening(data_file):
     """
 
 
-def _fit_ce(data_file,ce_file, ce_radius=None):
+def _fit_ce(calc_data_file, ce_file, ce_radius=None):
     """
         Inputs:
             1, data_file: name of the mson file that stores the primitive cell for the calculation,
@@ -61,7 +61,7 @@ def _fit_ce(data_file,ce_file, ce_radius=None):
             None. The ce_data file will be updated.
 
     """
-    calc_data = json.load(open(data_file,'r'))
+    calc_data = json.load(open(calc_data_file,'r'))
     prim = Structure.from_dict(calc_data['prim'])
 
     #Use crystal nearest neighbor analyzer to find nearest neighbor distance, and set cluster radius according to it.
@@ -120,25 +120,42 @@ def _dedup(calc_data_dict):
     unique_data_dict['input_structures'] = []
     unique_data_dict['relaxed_structures'] = []
     unique_data_dict['total_energies'] = []
+    unique_data_dict['magmoms'] = []
     unique_data_dict['compositions'] = []
+    unique_data_dict['supercell_matrices'] = []
 
     sm = StructureMatcher(stol=0.1, ltol=0.1, angle_tol=1, comparator=ElementComparator())
     for entry_i, str_data in enumerate(calc_data_dict['relaxed_structures']):
         is_unique=True;
         struct = Structure.from_dict(str_data)
         for entry_j, ustr_data in enumerate(unique_data_dict['relaxed_structures']):
-            ustruct = Structure.from
-            if sm.fit(Str['s'], UStr['s']): Unique=False; break;
-        if Unique: ULst.append(UStr);
-    for UStr in ULst: UStr['s'] = UStr['s'].as_dict();
-    return ULst;
+            ustruct = Structure.from_dict(ustr_data)
+            if sm.fit(struct,ustruct):
+                is_unique = False
+                break
+        if is_unique:
+            unique_data_dict['input_structures'].append(calc_data_dict['input_structures'][entry_i])
+            unique_data_dict['relaxed_structures'].append(calc_data_dict['relaxed_structures'][entry_i])
+            unique_data_dict['total_energies'].append(calc_data_dict['total_energies'][entry_i])
+            unique_data_dict['magmoms'].append(calc_data_dict['magmoms'][entry_i])
+            unique_data_dict['compositions'].append(calc_data_dict['compositions'][entry_i])
+            unique_data_dict['supercell_matrices'].append(calc_data_dict['supercell_matrices'][entry_i])
 
-def _assign_ox_states(Str,Mag):
+    print('Selected {} out of {} structures after deduplication.'.format(len(unique_data_dict['compositions']),\
+          len(calc_data_dict['compositions'])))
+
+    return unique_data_dict;
+
+def _assign_ox_states(struct,magmoms):
     """
-    Aassign oxidation states based on magnetic moments taken from the OUTCAR.
+    Assign oxidation states based on magnetic moments taken from the OUTCAR.
     Reference magnetic moments obtained by looking at a bunch of structures.
 
     DOES NOT CHECK THAT THE ASSIGNMENT IS CHARGE BALANCED!
+
+    Currently assinging based on an OXRange dict file, but does not ensure 
+    charge balance!!
+
     Args:
         Str: structure
         Mag: list of magnetic moments for the sites in s
@@ -146,36 +163,47 @@ def _assign_ox_states(Str,Mag):
     # Oxidation states corresponding to a range of magnetic moments (min, max)
     ###OXRange imported from OxData.py
     DefaultOx={'Li':1,'F':-1,'O':-2}; OxLst=[];
-    for SiteInd,Site in enumerate(Str.Sites):
+    # Restricted Ox state for O to 2 here, but actually can be one. There is currently
+    # no good method to assign since O magmoms are usually highly inaccurate. We have 
+    # to do that.
+
+    for site_id, site in enumerate(struct):
         Assigned=False;
-        if Site.species_string in OXRange.keys():
-            for (MinMag,MaxMag),MagOx in OXRange[Site.species_string].items():
-                if Mag[SiteInd]>=MinMag and Mag[SiteInd]<MaxMag:
+        if site.species_string in OXRange.keys():
+            for (MinMag,MaxMag),MagOx in OXRange[site.species_string].items():
+                if magmoms[site_id]>=MinMag and magmoms[site_id]<MaxMag:
                     OxLst.append(MagOx); Assigned=True; break;
-        elif Site.species_string in DefaultOx.keys():
-            OxLst.append(DefaultOx[Site.species_string]); Assigned=True;
+        elif site.species_string in DefaultOx.keys():
+            OxLst.append(DefaultOx[site.species_string]); Assigned=True;
         if not Assigned:
             print("Cant assign ox states for site={}, mag={}".\
                     format(Site,Mag[SiteInd])); assert Assigned;
-    Str.add_oxidation_state_by_site(OxLst);
+
+    struct.add_oxidation_state_by_site(OxLst);
     return Str;
 
-def load_data(LoadDirs,OutFile):
+def _load_data(vaspdir,ce_file,calc_data_file):
     """
     Args:
         LoadDirs: List of directories to search for VASP runs
         OutFile: Savefile
+    This function parses existing vasp calculations, does mapping check, assigns charges and writes into the calc_data file 
+    mentioned in previous functions. What we mean by mapping check here, is to see whether a deformed structure can be mapped
+    into a supercell lattice and generates a set of correlation functions in clustersupercell.corr_from_structure.
+    
+    We plan to do modify corr_from_structure from using pymatgen.structurematcher to a grid matcher, which will ensure higher 
+    acceptance for DFT calculations, but does not necessarily improve CE hamitonian, since some highly dipoled and deformed 
+    structures might have poor DFT energy, and even SABOTAGE CE!
     """
-    Data=[];
+
+    calc_data_dict = {}
     # Load VASP runs from given directories
-    for LoadDir in LoadDirs:
-        for Root,Dirs,Files in os.walk(LoadDir):
-            if "OSZICAR" in Files and 'CONTCAR' in Files and 'OUTCAR' in Files\
-                    and '3.double_relax' in Root:
-                try:
-                    Name=os.sep.join(Root.split(os.sep)[0:-1]);
-                    Str=Poscar.from_file(os.path.join(Root,"CONTCAR")).structure
-                    ValidComp=True;
+    for Root,Dirs,Files in os.walk(vaspdir):
+        if "OSZICAR" in Files and 'CONTCAR' in Files and 'OUTCAR' in Files and '3.double_relax' in Root:
+            try:
+                Name=os.sep.join(Root.split(os.sep)[0:-1]);
+                Str=Poscar.from_file(os.path.join(Root,"CONTCAR")).structure
+                ValidComp=True;
                     for Ele in Str.composition.element_composition.elements:
                         if str(Ele) not in ['Li', 'Mn', 'O', 'F']: ValidComp=False;break;
                     if not ValidComp: continue;
