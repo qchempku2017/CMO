@@ -14,10 +14,9 @@ import random
 from copy import deepcopy
 import numpy as np
 import numpy.linalg as la
+
 from pymatgen.analysis.structure_matcher import StructureMatcher, ElementComparator
 from pyabinitio.cluster_expansion.ce import ClusterExpansion
-from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from itertools import groupby
 from pymatgen.io.vasp.sets import MITRelaxSet
 from pymatgen.io.vasp.inputs import *
 from pymatgen.io.vasp.outputs import *
@@ -26,6 +25,8 @@ from pymatgen import Structure
 from pymatgen.core.periodic_table import Specie
 from pymatgen.core.composition import Composition
 from pymatgen.core.sites import PeriodicSite
+from pymatgen.analysis.elasticity.strain import Deformation
+
 from itertools import permutations,product
 from operator import mul
 from functools import partial,reduce
@@ -68,28 +69,36 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
         selected_scs=[_mat_mul(sc,transmat) for sc in selected_scs]
     return selected_scs
 
-def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,all_axis=None,TLst=[500, 1500, 10000]):
+def _get_mc_structs(ce_file,outdir='vasp_run',SCLst,Prim=None,all_axis=None,TLst=[500, 1500, 10000]):
     '''For CE sampling using MC, use three set of temperature, merge this with LocalOrdering code
-       CEFile: directory of CE Mson data file
-       OutDir: directory to write outputs
+       ce_file: directory of CE Mson data file
+       outdir: directory to write outputs
        SCLst: a list contaning enumerated SC's and RO pairs.
        Prim: primitive cell read from cif file
        TLst: temprature list to do MC enumeration on
        useX: a list of compounds of which we may want to calculate component.
     '''
     print('#### MC Initialization ####')
-    if CEFile:
+    calculated_structures = []
+    if ce_file:
         # Load cluster expansion
-        with open(CEFile,'r') as Fid: cedata = json.load(Fid);
-        CalcData=cedata['calcdata']
-        else: print("Not checking versus previous calculations")
+        with open(ce_file,'r') as Fid: cedata = json.load(Fid);
+        _was_generated = lambda x: 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
+        if os.path.isdir(outdir):
+            print("Checking previously enumerated structures.")
+            for root,dirs,files in os.walk(outdir):
+                if _was_generated(files):
+                    calculated_structures.append(Poscar.from_file(os.join(root,'POSCAR').structure))
+        else: 
+            print("Not checking versus previous calculations")
         CE=ClusterExpansion.from_dict(cedata['cluster_expansion']); 
         ECIs=cedata['ecis']; 
         print('ce information:'); print(ce.structure);
         Prim = ce.structure
+
     else:
-        # No existing cluster expansion - use electrostatics only
-        CalcData=[];
+        # No existing cluster expansion, we are building form start - use electrostatics only
+        print("Not checking versus previous calculations")
         CE=ClusterExpansion.from_radii(Prim,{2: 1},ltol=0.3,stol=0.2,angle_tol=2,\
                                        supercell_size='num_sites',use_ewald=True,use_inv_r=False,eta=None);
         ecis=np.zeros(CE.n_bit_orderings+1); ecis[-1]=1;
@@ -199,10 +208,6 @@ def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,all_axis=None,TLst=[
 
     # Deduplicate - first versus previously calculated structures, then versus structures within this run
     print('Deduplicating random structures.')
-    calculated_structures = []
-
-    for calc_i, calc in enumerate(CalcData):
-        calculated_structures.append(Structure.from_dict(calc['s']))
 
     unique_structs = {}
     unqCnt = 0
@@ -227,14 +232,14 @@ def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,all_axis=None,TLst=[
 
     # Save structures
     print('#### MC Final Saving ####')
-    if not os.path.isdir(OutDir):
-        os.mkdir(OutDir)
-        print(OutDir,' does not exist. Created.')
+    if not os.path.isdir(outdir):
+        os.mkdir(outdir)
+        print(outdir,' does not exist. Created.')
 
     RO_id = 0
     for RO_string,structs in unique_structs.items():
         RODir = 'Composition{}'.format(RO_id)
-        compPathDir = os.path.join(OutDir,RODir)
+        compPathDir = os.path.join(outdir,RODir)
         if not os.path.isdir(compPathDir): os.mkdir(compPathDir)
         occu_file_path = os.path.join(compPathDir,'composition_by_site')
         if not os.path.isfile(occu_file_path):
@@ -251,9 +256,9 @@ def _get_mc_structs(CEFile,CalcFiles,OutDir,SCLst,Prim=None,all_axis=None,TLst=[
             Poscar(struct.get_sorted_structure()).write_file(os.path.join(structDir,'POSCAR'))
         RO_id += 1
 
-    print('Saving of %s successful. Writing VASP input files later.'%OutDir)
+    print('Saving of %s successful. Writing VASP input files later.'%outdir)
 
-def _write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vasp_settings=None, strain=[1.01,1.05,1.03]):
+def _write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
     # This is a somewhat strange input set. Essentially the matgen input set (PBE+U), but with tigher
     # convergence.
     # This is also a somewhat outdated and convoluted way to generate VASP inputs but it should work fine.
@@ -276,11 +281,10 @@ def _write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_va
     if not os.path.isdir(VASPDir):os.mkdir(VASPDir);
 
     # Joggle the lattice to help symmetry broken relaxation. You may turn it off by setting strain=None
-    FracCoords=[Site.frac_coords for Site in Str.sites];
-    Species=[Site.specie for Site in Str.sites]; Latt=Str.lattice;
     if strain:
-        StrainedLatt=Lattice.from_lengths_and_angles([Latt.a*strain[0],Latt.b*strain[1],Latt.c*strain[2]],
-                                                [Latt.alpha,Latt.beta,Latt.gamma]);
+         deformation = Deformation(strain)
+         Str = Deformation.apply_to_structure(Str)
+
     Str=Structure(StrainedLatt,Species,FracCoords,to_unit_cell=False,coords_are_cartesian=False);
     VIO=MITRelaxSet(Str,potcar_functional = functional); VIO.user_incar_settings=VASPSettings;
     VIO.incar.write_file(os.path.join(VASPDir,'INCAR'));
@@ -302,7 +306,7 @@ def _gen_vasp_inputs(SearchDir):
     POSDirs=[];
     for Root,Dirs,Files in os.walk(SearchDir):
         for File in Files:
-            if File == 'POSCAR' and 'fm.0' not in Root: POSDirs.append([Root,File]);
+            if File == 'POSCAR' and 'fm.0' not in Root and 'INCAR' not in Root: POSDirs.append([Root,File]);
     for [Root,File] in POSDirs:
         print("Writing VASP inputs for {}/{}".format(Root,File));
         Str=Poscar.from_file(os.path.join(Root,File)).structure
@@ -499,7 +503,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
         return SCLst,None
 
 class StructureGenerator(MSONable):
-    def __init__(prim, outdir='vasp_calc', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=[[1,0,0],[0,1,0],[0,0,1]],ce_file = None):
+    def __init__(prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=[[1,0,0],[0,1,0],[0,0,1]],ce_file = None):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
               rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
@@ -535,6 +539,9 @@ class StructureGenerator(MSONable):
         print("Using transformation matrix {}".format(transmat))
         self.ce_file = ce_file
         self.outdir =  outdir
+        if not os.path.isfile('prim'):
+            print("Primitive POSCAR file 'prim' doesn't exist. Creating one.")
+            Poscar(prim,comment='PRIMITIVE CELL FILE').write_file('prim')
         
     def generate_structures(self):
         sc_ro,all_axis =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\

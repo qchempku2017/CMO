@@ -10,9 +10,8 @@ __version__ = 'Dev'
 
 import os
 import sys
-import json
 
-def _run_vasp(RunDir):
+def _run_vasp(RunDir='vasp_run'):
     """
     Run vasp for all structures under RunDir.
     """
@@ -28,7 +27,14 @@ def _run_vasp(RunDir):
                      and ('KPOINTS' in files)
 
     for Root,Dirs,Files in os.walk(RunDir):
-        if _is_VASP_Input(Files) and 'fm.0' in Root: POSDirs.append(Root);
+        if _is_VASP_Input(Files) and 'fm.0' in Root:
+            if os.path.isfile(os.join(root,'OUTCAR')):
+                with open(os.path.isfile(os.join(root,'OUTCAR'))) as outfile:
+                    outstring = outfile.read()
+                    if 'reached required accuracy' in outstring:
+                        continue
+            # Kicking out completed calculations.
+            POSDirs.append(Root);
 
     for Root in POSDirs:
         runRoot = os.path.abspath(Root)
