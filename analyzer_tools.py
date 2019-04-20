@@ -22,14 +22,14 @@ from pyabinitio.cluster_expansion.eci_fit import EciGenerator
 from pyabinitio.cluster_expansion.ce import ClusterExpansion
 from pymatgen.io.vasp.inputs import *
 from pymatgen.io.vasp.outputs import *
-from pymatgen.io.cif import *
+from pymatgen.io.cif import CifParser
 from pymatgen import Structure
 from pymatgen.analysis.elasticity.strain import Deformation
 
 from OxData import OXRange #This should be a database like file
 
 
-def _fit_ce(calc_data_file, ce_file, prim_file='prim', ce_radius=None):
+def _fit_ce(calc_data_file='calcdata.mson', ce_file='ce.mson', ce_radius=None):
     """
         Inputs:
             1, data_file: name of the mson file that stores the primitive cell for the calculation,
@@ -49,20 +49,29 @@ def _fit_ce(calc_data_file, ce_file, prim_file='prim', ce_radius=None):
     #Use crystal nearest neighbor analyzer to find nearest neighbor distance, and set cluster radius according to it.
     
     ValidStrs = []
-    for CalcInd, Calc in enumerate(calc_data['relaxed_structures']):
-        Str=Structure.from_dict(Calc);
-        ValidStrs.append(Str);
+    energies = []
+    for comp in calc_data['compositions']:
+        for entry in calc_data['compositions'][comp]:
+            ValidStrs.append(Structure.from_dict(entry['relaxed structure']))
+            energies.append(entry['total_energy'])
+
     ## These should already have been deduplicated
 
+    prim = Structure.from_dict(calc_data['prim'])
     cnn = CrystalNN()
-    nn = cnn.find_nn_info(ValidStrs[0],0)[0]['site']
-    d_nn = ValidStrs[0][0].distance(nn)
+    all_nn_d = []
+    for i in range(len(prim)):
+        nns = cnn.find_nn_info(prim,i)
+        nn_d = min([nn['site'].distance(prim[i]) for nn in nns])
+        all_nn_d.append(nn_d)
+    d_nn=max(all_nn_d)
 
     if not ce_radius:
         ce_radius = {}
-        ce_radius[2]=d_nn*4
-        ce_radius[3]=d_nn*2
-        ce_radius[4]=d_nn*2
+        # Default cluster radius
+        ce_radius[2]=d_nn*4.0
+        ce_radius[3]=d_nn*2.0
+        ce_radius[4]=d_nn*2.0
     
     if os.path.isfile(ce_file):
         with open(ce_file,'r') as ce_old_stream:
@@ -71,8 +80,7 @@ def _fit_ce(calc_data_file, ce_file, prim_file='prim', ce_radius=None):
         max_de = ce_data_old['max_dielectric']
         max_ew = ce_data_old['max_ewald']
     else:
-        with open(prim_file,'r') as p_file:
-            prim = Poscar.from_file(p_file).structure
+
         CE=ClusterExpansion.from_radii(prim, ce_radius,ltol=0.15, \
                                      stol=0.2, angle_tol=2,supercell_size='volume',
                                      use_ewald=True,use_inv_r=False,eta=None);
@@ -82,59 +90,22 @@ def _fit_ce(calc_data_file, ce_file, prim_file='prim', ce_radius=None):
     # You have to write on your own.
 
     ECIG=EciGenerator.unweighted(cluster_expansion=CE, structures=ValidStrs,\
-                                 energies = calc_data['total_eneriges'],\
+                                 energies = energies,\
                                  max_dielectric=max_de, max_ewald=max_ew);
 
     print("RMSE: {} eV/prim".format(ECIG.rmse)); 
     
     ce_data_new = ECIG.as_dict()
-    ce_data_new['rmse_current']=ECIG.rmse
+    if 'rmse_log' not in ce_data_new:
+        ce_data_new['rmse_log']=[]
+
+    ce_data_new['rmse_log'].append({'num_struct':len(ValidStrs),'rmse':ECIG.rmse})
+
     with open(ce_file,'w') as ce_stream:
         json.dump(ce_data_new,ce_stream)
 
     print('{} updated.'.format(ce_file))
     
-
-def _dedup(calc_data_dict):
-    """
-    Deduplicate list of structures by structure matching. Only comparing elements, not species.
-    """
-    """
-        Many relaxed structures appears too far off input structures. Filter them out and update the 
-        database. Also deduplicate here since two diffrent inputs might result in a same output.
-    """
-    unique_data_dict={}
-    unique_data_dict['prim'] = calc_data_dict['prim']
-    unique_data_dict['input_structures'] = []
-    unique_data_dict['relaxed_structures'] = []
-    unique_data_dict['total_energies'] = []
-    unique_data_dict['magmoms'] = []
-    unique_data_dict['compositions'] = []
-    unique_data_dict['supercell_matrices'] = []
-
-    sm = StructureMatcher(stol=0.1, ltol=0.1, angle_tol=1, comparator=ElementComparator())
-    # same elemental occupations with different charge assignments will be considered same
-    for entry_i, str_data in enumerate(calc_data_dict['relaxed_structures']):
-        is_unique=True;
-        struct = Structure.from_dict(str_data)
-        for entry_j, ustr_data in enumerate(unique_data_dict['relaxed_structures']):
-            ustruct = Structure.from_dict(ustr_data)
-            if sm.fit(struct,ustruct):
-                is_unique = False
-                break
-        if is_unique:
-            unique_data_dict['input_structures'].append(calc_data_dict['input_structures'][entry_i])
-            unique_data_dict['relaxed_structures'].append(calc_data_dict['relaxed_structures'][entry_i])
-            unique_data_dict['total_energies'].append(calc_data_dict['total_energies'][entry_i])
-            unique_data_dict['magmoms'].append(calc_data_dict['magmoms'][entry_i])
-            unique_data_dict['compositions'].append(calc_data_dict['compositions'][entry_i])
-            unique_data_dict['supercell_matrices'].append(calc_data_dict['supercell_matrices'][entry_i])
-
-    print('Selected {} out of {} structures after deduplication.'.format(len(unique_data_dict['compositions']),\
-          len(calc_data_dict['compositions'])))
-
-    return unique_data_dict;
-
 def _assign_ox_states(struct,magmoms):
     """
     Assign oxidation states based on magnetic moments taken from the OUTCAR.
@@ -171,11 +142,12 @@ def _assign_ox_states(struct,magmoms):
     struct.add_oxidation_state_by_site(OxLst);
     return Str;
 
-def _load_data(ce_data_file, calc_data_file, vaspdir='vasp_run', max_deformation={'ltol':0.1,'stol':0.5,'angle_tol':5}):
+def _load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vasp_run',\
+               max_deformation={'ltol':0.1,'stol':0.5,'angle_tol':5}):
     """
     Args:
         vaspdir: List of directories to search for VASP runs
-        ce_file: cluster expansion data file, as mentioned in a previous function doc
+        prim_file: primitive cell file.
         ce_data_file: output database file.
 
     This function parses existing vasp calculations, does mapping check, assigns charges and writes into the calc_data file 
@@ -187,38 +159,44 @@ def _load_data(ce_data_file, calc_data_file, vaspdir='vasp_run', max_deformation
     structures might have poor DFT energy, and even SABOTAGE CE!
     """
 
-    with open(ce_file) as ce_data_file:
-        ce_data = json.load(ce_data_file)
+    prim = CifParser(primfile).get_structures()[0]
     calc_data_dict = {}
-    ce = ClusterExpansion.from_dict(ce_data['cluster_expansion'])
+
     calc_data_dict['prim'] = ce.structure.as_dict()
-    calc_data_dict['input_structures'] = []
-    calc_data_dict['relaxed_structures'] = []
-    calc_data_dict['total_energies'] = []
-    calc_data_dict['magmoms'] = []
-    calc_data_dict['compositions'] = []
-    calc_data_dict['supercell_matrices'] = []  
+    calc_data_dict['compositions']={}
+    
+    if os.path.isfile(calc_data_file):
+        print("Loading existing calculation datas.")
+        with open(calc_data_file) as old_calc:
+            calc_data_dict = json.load(old_calc)
+
+    # Every key of calc_data_dict['compositions'] is a composition, and each composition contains a list of dict entrees.
+    # relaxed_structure, input_structure, supercell_matrix, magmoms, total_energy. 
 
     _is_vasp_calc = lambda fs: 'INCAR' in fs and 'POSCAR' in fs and 'KPOINTS' in fs and 'POTCAR' in fs and \
-                               'CONTCAR' in fs and 'OSZICAR' in fs and 'OUTCAR' in fs and 'composition' in fs
+                               'CONTCAR' in fs and 'OSZICAR' in fs and 'OUTCAR' in fs
     # Load VASP runs from given directories
+
+    _did_ax_decomp = False
     for root,dirs,files in os.walk(vaspdir):
         if _is_vasp_calc(files):
             try:
                 print("Loading VASP run in {}".format(root));
+                parent_root = os.path.join(*root.split(os.sep)[0:-1])
+                parent_parent_root = os.path.join(*root.split(os.sep)[0:-1])
+
                 relaxed_struct = Poscar.from_file(os.path.join(root,'CONTCAR')).structure
-                input_struct = Poscar.from_file(os.path.join(root.split(os.sep)[0:-1],
-                                                'POSCAR')).structure
+                input_struct = Poscar.from_file(os.path.join(parent_root,'POSCAR')).structure
                 # Note: the input_struct here comes from the poscar in upper root, rather than fm.0, so 
                 # it is not deformed.
 
                 # Rescale volume to that of unrelaxed structure, this will lead to a better mapping back. 
                 # I changed it to a rescaling tensor
+                relaxed_lat_mat = np.matrix(relaxed_struct.lattice.matrix)
+                input_lat_mat = np.matrix(input_struct.lattice.matrix)
+                o2i_deformation = Deformation(input_lat_mat.T*relaxed_lat_mat.I.T)
+                relaxed_deformed = o2i_deformation.apply_to_structure(relaxed_struct)
 
-                relaxed_lat_mat = relaxed_struct.lattice.matrix
-                input_lat_mat = input_struct.lattice.matrix
-                o2i_deformation = Deformation((relaxed_lat_mat.I*input_lat_mat).tolist())
-                relaxed_deformed = Deformation.apply_to_structure(relaxed_struct)
                 # Assign oxidation states to Mn based on magnetic moments in OUTCAR
                 Out=Outcar(os.path.join(root,'OUTCAR')); Mag=[];
                 for SiteInd,Site in enumerate(relaxed_struct.sites):
@@ -227,53 +205,67 @@ def _load_data(ce_data_file, calc_data_file, vaspdir='vasp_run', max_deformation
                 # Throw out structures where oxidation states don't make sense
                 if np.abs(relaxed_struct.charge)>0.01:
                     print(relaxed_struct);print("Not charge balanced .. skipping");continue;
+
                 # Get final energy from OSZICAR or Vasprun. Vasprun is better but OSZICAR is much
                 # faster and works fine is you separately check for convergence, sanity of
                 # magnetic moments, structure geometry
-                #if VASPRUN: TotE=float(Vasprun(os.path.join(Root, "vasprun.xml")).final_energy);
-                TotE=Oszicar(os.path.join(root, 'OSZICAR')).final_energy;
-                # Checking convergence
                 with open(os.path.join(root, 'OUTCAR')) as outfile:
                     outcar_string = outfile.read()
                 if 'reached required accuracy' not in outcar_string:
                     print('Instance {} did not converge to required accuracy. Skipping.')
                     continue
+                TotE=Oszicar(os.path.join(root, 'OSZICAR')).final_energy;
+                # Checking convergence
+
+                with open(os.path.join(parent_parent_root,'composition_by_site')) as compfile:
+                    composition = json.load(compfile)
+                with open(os.path.join(parent_root,'supermat')) as supermat_file:
+                    supermat = json.load(supermat_file)
+                
+                if composition not in calc_data_dict['compositions']:
+                    calc_data_dict['compositions'][composition]=[]
+
                 # Checking site deformation and mapping.
                 sm = StructureMatcher(stol=max_deformation['stol'], ltol=max_deformation['ltol'],\
                                       angle_tol=max_deformation['angle_tol'], comparator=ElementComparator())
 
                 # This is out deformation tolerance.
-                if sm.fit(relaxed_deformed, input_struct)    
-                    calc_data_dict['input_structures'].append(input_struct.as_dict())
-                    calc_data_dict['relaxed_structures'].append(relaxed_struct.as_dict())
-                    calc_data_dict['total_energies'].append(TotE)
-                    calc_data_dict['magmoms'].append(Mag)
-                    #compositional info are stored two levels up!
-                    comp_file_dir = os.path.join(root.split(os.sep)[0:-2])
-                    with open(os.path.join(comp_file_dir,'composition_by_site')) as compfile:
-                        composition = json.load(compfile)
-                    calc_data_dict['compositions'].append(composition)
-                    supermat = ce.supercell_from_structure(input_struct).supercell_matrix
-                    calc_data_dict['supercell_matrices'].append(supermat)
+                if not sm.fit(relaxed_deformed, input_struct):
+                    continue
+
+                strict_sm = StructureMatcher(stol=0.1, ltol=0.1, angle_tol=1, comparator=ElementComparator())
+                _is_unique = True
+                for entry in calc_data_dict['compositons'][composition]:
+                    entry_struct = Structure.from_dict(entry['relaxed_structure'])
+                    if strict_sm.fit(entry_struct,relaxed_struct):
+                        _is_unique = False
+                        break
+
+                if _is_unique:
+                    new_entry = {}
+                    new_entry['input_structure'].append(input_struct.as_dict())
+                    new_entry['relaxed_structure'].append(relaxed_struct.as_dict())
+                    new_entry['total_energy'].append(TotE)
+                    new_entry['magmoms'].append(Mag)
+                    new_entry['supercell_matrices'].append(supermat)
                     if 'axis' in files:
-                        if 'axis' not in calc_data_dict:
-                            calc_data_dict['axis']=[]
-                    if 'axis' in files:
-                        with open(os.path.join(comp_file_dir,'axis')) as axisfile:
+                        _did_ax_decomp = True
+                        with open(os.path.join(parent_parent_root,'axis')) as axisfile:
+                            
                             axis = json.load(axisfile)
-                        calc_data_dict['axis'].append(axis)
+                        if 'axis' not in new_entry:
+                            new_entry['axis']=axis
                     else:
-                        if 'axis' in calc_data_dict:
+                        if _did_ax_decomp:
                             print('Selected axis decomposition, but instance {} is not axis decomposed!'.format(root))
-                            calc_data_dict['axis'].append(None)
+                            new_entry['axis'] = None
+                    calc_data_dict['compositions'][composition].append(new_entry)
 
             except: print("\tParsing error - calculation not finished?")
         else:
             print('\tParsing error - calculation not finished?')
 
-    # Deduplicate data
-    print('Deduplicating vasp calculation data!')
-    unique_calc_dict = _dedup(calc_data_dict);
-    with open(calc_data_file,"w") as Fid: json.dump(Fid,unique_calc_dict));
+    # Data already deduplicated!
+    with open(calc_data_file,"w") as Fid: json.dump(calc_data_dict,Fid));
     print('Parsed vasp data saved into {}'.format(calc_data_file))
 

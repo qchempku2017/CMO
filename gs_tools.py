@@ -213,7 +213,7 @@ class GScanonical(MSONable):
             sp_list.extend(site_occu.values())
         self._comp_step = _GCD_List(sp_list)
         # Find the enumeration step for composition, and this will be the minimum enumerated supercell size.
-        self.composition=[{sp:site_occu[sp]/comp_step for sp in site_occu} for site_occu in composition]
+        self.composition=[{sp:site_occu[sp]//self._comp_step for sp in site_occu} for site_occu in composition]
 
         self.ubsolver = ubsolver
         self.e_lower = None

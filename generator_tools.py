@@ -36,6 +36,11 @@ import collections
 from mc import *
 from global_tools import *
 
+####
+# For Peichen: If you want to implement the structure selection rule, please try to do it in a private tool funtion and please
+# ONLY CHANGE _get_mc_structs by adding logical brances. Thanks!
+####
+
 ##################################
 ## Less general tools that are not cross refered by other modules
 ##################################
@@ -54,7 +59,7 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
     '''
     print('#### Supercell Enumeration ####')
     scs=[]
-    trans_size = int(abs(np.linalg.det(transmat)))
+    trans_size = int(abs(np.linalg.det(transmat))) if transmat else 1
     for det in range(int(maxDet/4),maxDet+1,int(maxDet/4)):
         scs.extend(_Get_Hermite_Matricies(int(det/trans_size)))
     print('Generated %d supercell matrices with max determinant %d'%(len(scs),maxDet))
@@ -449,7 +454,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
                poss_Sp_Nums[specie]=list(range(0,SC_sizes[sc_id]+1,sampleStep))
             keys,values = zip(*poss_Sp_Nums.items())
             allOccu_for_Site = [dict(zip(keys,v)) for v in itertools.product(*values) if (((enforceOccu and\
-            sum(v)/SC_sizes[sc_id]+0.01>enforceOccu[site]) or (not enforceOccu)) and (sum(v)/SC_sizes[sc_id]\
+            sum(v)/SC_sizes[sc_id]+0.01>enforceOccu[s]) or (not enforceOccu)) and (sum(v)/SC_sizes[sc_id]\
             -0.01<1.0))]
             #print(allOccu_for_Site)
             poss_Occu_Sites.append(allOccu_for_Site)
@@ -503,7 +508,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
         return SCLst,None
 
 class StructureGenerator(MSONable):
-    def __init__(prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=[[1,0,0],[0,1,0],[0,0,1]],ce_file = None):
+    def __init__(prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = None):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
               rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
@@ -539,10 +544,7 @@ class StructureGenerator(MSONable):
         print("Using transformation matrix {}".format(transmat))
         self.ce_file = ce_file
         self.outdir =  outdir
-        if not os.path.isfile('prim'):
-            print("Primitive POSCAR file 'prim' doesn't exist. Creating one.")
-            Poscar(prim,comment='PRIMITIVE CELL FILE').write_file('prim')
-        
+
     def generate_structures(self):
         sc_ro,all_axis =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
                                         self.sample_step, self.sc_selec_num, self.comp_axis, self.transmat)
@@ -554,6 +556,20 @@ class StructureGenerator(MSONable):
 ####
 # I/O interface for saving only, from_dict method not required
 ####
+    @classmethod
+    def from_dict(self,d):
+        prim = d['prim'].from_dict()
+        generator = StructureGenerator(prim)
+        generator.enforced_occu = d['enforced_occu']
+        generator.comp_axis = d['comp_axis']
+        generator.sample_step = d['sample_step']
+        generator.max_sc_size = d['max_sc_size']
+        generator.sc_selec_num = d['sc_selec_num']
+        generator.transmat = d['transmat']
+        generator.ce_file = d['ce_file']
+        generator.outdir = d['outdir']
+        return generator
+
     def as_dict(self):
         return {'prim':self.prim.as_dict(),\
                 'enforced_occu':self.enforced_occu,\

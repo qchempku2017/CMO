@@ -15,7 +15,7 @@ import time
 from pymatgen.io.cif import CifParser
 from monty.json import MSONable
 
-from generator_tools,analyzer_tools,runner_tools import *
+from generator_tools,analyzer_tools,runner_tools,gs_tools import *
 
 ###################################
 #One example of OXRange we use is given below:
@@ -43,74 +43,49 @@ class CEAutojob(MSONable):
         generator(cycle 1):N structures -> runner -> analyzer -> gs_solver: N_hull structures -> runner -> analyzer -> RMSE and 
         termination conditions -> generator(cycle 2)
 
-        Runner is the pivot. Still looking at it.
+        Runner is the pivot. Still looking at it. Using old stuff as alternative.
     """
- if __name__ == "__main__":
+    def __init__(self):
+        raise NotImplementedError
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--load', help="Load vasp runs", type=str, default=None, nargs='+')
-    parser.add_argument('--vasp', help="JSON files with saved VASP outputs", type=str, nargs='+')
-    parser.add_argument('--ce', help="JSON file of current CE", type=str, default=None)
-    parser.add_argument('--fit', help="Fit CE based on VASP outputs", action='store_true')
-    parser.add_argument('--prim', help="cif file of primitive cell(for CE fitting)", type=str, default=None)
-    parser.add_argument('--getmc', help="Generate MC structures from this CE", action='store_true')
-    parser.add_argument('--supercellnum',help="Number of skewed and unskewed supercells to sample",type=int,default=10)
-    parser.add_argument('--transmat',help="Transformation matrix to prim, if it is possible to make your prim more symmetric",\
-                       type=int,nargs='+',default=None)
-    parser.add_argument('--compounds',help="Compounds to enumerate. Example:--compunds='LiCoO2,LiF,Li2CoO2'",\
-                       type=str, default=None)
+    parser.add_argument('-f','--fit', help="Fit CE based on VASP outputs", action='store_true')
+    
+    parser.add_argument('-g','--generate', help="Generate MC structures from this CE", action='store_true')
+    parser.add_argument('--prim', help="cif file of primitive cell to construct the CE work from", type=str, default='prim.cif')
+    parser.add_argument('--numsc',help="Number of skewed and unskewed supercells to sample",type=int,default=10)
+    parser.add_argument('--transmat',help="Transformation matrix to prim, if it is possible to make your prim more symmetric.\                        Example: --transmat = '[[1,0,0],[0,1,0],[0,0,1]]' ", type=str, default=None)
+    parser.add_argument('--compaxis',help="Axis on which you want to decompose your compositions.\ 
+                         Example:--compaxis='LiCoO2,LiF,CoO'",type=str, default=None)
     parser.add_argument('--enforceoccu',help='''Minimum required occupation fraction for each site. Site refered to by
-                      index. Example: --enforceoccu='{"0":0.0,"1":1.0,"2":1.0,"3":1.0}'. ''',type=str,default=None)
-    parser.add_argument('--samplestep',help="Sampling step of sublattice sites.",type=int,default=1)
-    parser.add_argument('--scs', help="Max supercell matrix determinant to be enumerated(must be integer)",\
-                       type=int)
-    parser.add_argument('--tlst', help="Temperature list", type=int, nargs='+');
-    parser.add_argument('--complst', help="Composition list to be simulated[xNb,xF]", type=str,nargs='+');
-    parser.add_argument('--vaspinputs', help="Generate compatible VASP inputs for this directory", type=str, default=None)
-    parser.add_argument('--vasprun',help="Run vasp for all structures under this directory",type=str,default=None)
-    parser.add_argument('-o', help="Output filename (json file or dir)", default=None)
+                      index. Example: --enforceoccu='[0.0,1.0,1.0,1.0]'. ''',type=str,default=None)
+    parser.add_argument('--samplestep',help="Sampling step of number of species occupying sublattice sites.",type=int,default=1)
+    parser.add_argument('--scs', help="Max supercell matrix determinant to be enumerated (must be integer)",type=int,default=64)
+    parser.add_argument('--cefile',help="Read and use a existing CE file.",default='')
+     
+    parser.add_argument('-s','--solveGS',help="Solve for ground state with current CE", action='store_true')
+    parser.add_argument('-r','--run',help="Submit vasp jobs for VASP directory", action='store_true')
+
+    parser.add_argument('--vasprun',help="Store all vasp running data under this directory.",type=str,default='vasp_run')
+
     args = parser.parse_args()
     import time
 
     start_time = time.time()
     
-    if args.vaspinputs: gen_vasp_inputs(args.vaspinputs)
-    
-    elif args.vasprun:
-        run_vasp(args.vasprun)
-
-    elif args.load:
-        DirLst = args.load;
-        load_data(DirLst, args.o, wmg=args.mg)
-
-    elif args.fit:
-        primData = CifParser(args.prim)
-        prim = primData.get_structures()[0]
-        fit_ce(args.vasp, prim, args.o)
-
-    elif args.getmc:
-        primData = CifParser(args.prim)
-        prim = primData.get_structures()[0]
-
-        enforceoccu=json.loads(args.enforceoccu)
-        enforceoccuNew = {}
-        for key in enforceoccu:
-            enforceoccuNew[int(key)]=float(enforceoccu[key])
-
-        compounds = args.compounds.split(',')
-        supercells = []
-        if len(args.transmat)==9:
-            tm=args.transmat
-            transmat=[[tm[0],tm[1],tm[2]],[tm[3],tm[4],tm[5]],[tm[6],tm[7],tm[8]]]
-            print("Using pre-transformation matrix:",transmat)
+    if args.generate:
+        if os.path.isfile('generator.mson'):
+            print("Using existing generator setup.")
+            with open('generator.mson','r') as generatorfile:
+            generator = StructureGenerator.from_dict(json.load(generatorfile))
         else:
-            print("Warning: transformation matrix wasn't set. Using no pre-transformation to primitive cell!")
-            transmat=None
-        supercells.extend(Supercells_From_Compounds(args.scs,prim.get_sorted_structure(),compounds,\
-                              enforceoccuNew,args.samplestep,args.supercellnum,transmat))
-        #supercells is now a list of (sc,ro,composition)
-        if not args.ce:
-            get_mc_structs(args.ce, args.vasp, args.o, supercells,Prim=prim.get_sorted_structure())
-        else:
-            get_mc_structs(args.ce, args.vasp, args.o, supercells)
+            print("Constructing new generator.")
+            prim = CifParser(args.prim).get_structures()[0]
+            compaxis = json.loads(args.compaxis) if args.compaxis else None
+            enforceoccu = json.loads(args.enforceoccu) if args.compaxis else None
+            transmat = json.loads(args.transmat) if args.transmat else None
+
+            generator = StructureGenerator(prim, args.vasprun, enforceoccu, args.samplestep, args.scs,args.numsc,compaxis,transmat)
 
     print("--- %s seconds ---" % (time.time() - start_time)) 
