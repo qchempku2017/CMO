@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-./CEAutomator.py --vasprun='./LixCoO2'
+./CEAutomator.py -r

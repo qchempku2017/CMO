@@ -143,7 +143,7 @@ def _assign_ox_states(struct,magmoms):
     return Str;
 
 def _load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vasp_run',\
-               max_deformation={'ltol':0.1,'stol':0.5,'angle_tol':5}):
+               max_deformation={'ltol':0.2,'stol':0.1,'angle_tol':5}):
     """
     Args:
         vaspdir: List of directories to search for VASP runs

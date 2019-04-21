@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-./CEAutomator.py --prim='./Examples/LNO/lno_prim.cif' --getmc --enforceoccu='{"0":0.0,"1":1.0,"2":1.0,"3":1.0}' --compounds='LiCoO2,LiF,CoO' --samplestep=8 --scs 10.0 --supercellnum 1 -o='./LiCoOF'
+./CEAuto.py -g --comp_axis="['MgO','CaO']" --transmat='[[1,1,-1],[1,-1,1],[-1,1,1]]' --samplestep=2 --enforceoccu='[1.0,1.0]'
 

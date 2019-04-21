@@ -57,8 +57,8 @@ if __name__ == "__main__":
     parser.add_argument('--prim', help="cif file of primitive cell to construct the CE work from", type=str, default='prim.cif')
     parser.add_argument('--numsc',help="Number of skewed and unskewed supercells to sample",type=int,default=10)
     parser.add_argument('--transmat',help="Transformation matrix to prim, if it is possible to make your prim more symmetric.\                        Example: --transmat = '[[1,0,0],[0,1,0],[0,0,1]]' ", type=str, default=None)
-    parser.add_argument('--compaxis',help="Axis on which you want to decompose your compositions.\ 
-                         Example:--compaxis='LiCoO2,LiF,CoO'",type=str, default=None)
+    parser.add_argument('--compaxis',help='''Axis on which you want to decompose your compositions.\ 
+                         Example:--compaxis="['LiCoO2','LiF','CoO']"''',type=str, default=None)
     parser.add_argument('--enforceoccu',help='''Minimum required occupation fraction for each site. Site refered to by
                       index. Example: --enforceoccu='[0.0,1.0,1.0,1.0]'. ''',type=str,default=None)
     parser.add_argument('--samplestep',help="Sampling step of number of species occupying sublattice sites.",type=int,default=1)
@@ -67,7 +67,7 @@ if __name__ == "__main__":
     parser.add_argument('--calcdata',help="Store all analyzed vasp running data in this mson file.",type=str,default='calcdata.mson')      parser.add_argument('--vasprun',help="Store all vasp running data under this directory.",type=str,default='vasp_run')
     parser.add_argument('--maxdeformation',help="Maximum tolerable deformation between input and relaxed structures. \
                         Structure will be dropped when relaxation exceed this criteria.",type=str,\
-                        default={'ltol':0.1,'stol':0.5,'angle_tol':5})
+                        default={'ltol':0.2,'stol':0.1,'angle_tol':5})
     parser.add_argument('--gensetting',help="Generator setting file. Will use old one if detected. This overwrites all other args.",\
                         type=str, default='generator_settings.mson')
     parser.add_argument('--vaspsetting',help="VASP setting file. Is a mson file. See doc of generator_tools.py for description.",type=str,default='vasp_settings.mson')
