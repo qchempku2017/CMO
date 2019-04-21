@@ -15,7 +15,10 @@ import time
 from pymatgen.io.cif import CifParser
 from monty.json import MSONable
 
-from generator_tools,analyzer_tools,runner_tools,gs_tools import *
+from generator_tools import *
+from analyzer_tools import *
+from runner_tools import *
+from gs_tools import *
 
 ###################################
 #One example of OXRange we use is given below:
@@ -64,7 +67,8 @@ if __name__ == "__main__":
     parser.add_argument('--samplestep',help="Sampling step of number of species occupying sublattice sites.",type=int,default=1)
     parser.add_argument('--scs', help="Max supercell matrix determinant to be enumerated (must be integer)",type=int,default=64)
     parser.add_argument('--cefile',help="Read and use a existing CE file.",default='ce.mson')
-    parser.add_argument('--calcdata',help="Store all analyzed vasp running data in this mson file.",type=str,default='calcdata.mson')      parser.add_argument('--vasprun',help="Store all vasp running data under this directory.",type=str,default='vasp_run')
+    parser.add_argument('--calcdata',help="Store all analyzed vasp running data in this mson file.",type=str,default='calcdata.mson')
+    parser.add_argument('--vasprun',help="Store all vasp running data under this directory.",type=str,default='vasp_run')
     parser.add_argument('--maxdeformation',help="Maximum tolerable deformation between input and relaxed structures. \
                         Structure will be dropped when relaxation exceed this criteria.",type=str,\
                         default={'ltol':0.2,'stol':0.1,'angle_tol':5})
@@ -119,7 +123,7 @@ if __name__ == "__main__":
         maxdeformation=json.loads(args.maxdeformation)
 
         _load_data(args.prim,args.calcdata,args.vasprun,maxdeformation)
-        ceradius = json.loads(args.ceradius) if args.ceradius else:None
+        ceradius = json.loads(args.ceradius) if args.ceradius else None
         _fit_ce(args.calcdata,args.cefile,ceradius)
 
     elif args.solveGS:

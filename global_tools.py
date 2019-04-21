@@ -15,7 +15,7 @@ from functools import partial,reduce
 ## General tools that will be frequently cross referenced
 ##################################
 def _GCD(a,b):
-	""" The Euclidean Algorithm """
+    """ The Euclidean Algorithm """
     a = abs(a)
     b = abs(b)
     while a:
@@ -23,11 +23,11 @@ def _GCD(a,b):
     return b    
         
 def _GCD_List(lst):
-	""" Finds the GCD of numbers in a list.
+    """ Finds the GCD of numbers in a list.
 	Input: List of numbers you want to find the GCD of
 		E.g. [8, 24, 12]
 	Returns: GCD of all numbers, 4 
-	"""
+    """
     return reduce(_GCD, lst)
 
 def _get_bits(structure):

@@ -74,7 +74,7 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
         selected_scs=[_mat_mul(sc,transmat) for sc in selected_scs]
     return selected_scs
 
-def _get_mc_structs(ce_file,outdir='vasp_run',SCLst,Prim=None,all_axis=None,TLst=[500, 1500, 10000]):
+def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst=[500, 1500, 10000]):
     '''For CE sampling using MC, use three set of temperature, merge this with LocalOrdering code
        ce_file: directory of CE Mson data file
        outdir: directory to write outputs
@@ -577,7 +577,7 @@ class StructureGenerator(MSONable):
         try:
             sc_ro,all_axis =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
                                         self.sample_step, self.sc_selec_num, self.comp_axis, self.transmat)
-            _get_mc_structs(self.ce_file,self.outdir,sc_ro,Prim=self.prim,all_axis=all_axis,TLst=[500, 1500, 10000])
+            _get_mc_structs(self.ce_file,sc_ro,self.outdir,Prim=self.prim,all_axis=all_axis,TLst=[500, 1500, 10000])
             return True
         except:
             return False

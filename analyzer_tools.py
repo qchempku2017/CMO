@@ -17,7 +17,7 @@ import numpy as np
 import numpy.linalg as la
 
 from pymatgen.analysis.structure_matcher import StructureMatcher, ElementComparator
-from pymatgen.analysis.loacl_env import CrystalNN
+from pymatgen.analysis.local_env import CrystalNN
 from pyabinitio.cluster_expansion.eci_fit import EciGenerator
 from pyabinitio.cluster_expansion.ce import ClusterExpansion
 from pymatgen.io.vasp.inputs import *
@@ -270,6 +270,6 @@ def _load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vas
             print('\tParsing error - calculation not finished?')
 
     # Data already deduplicated!
-    with open(calc_data_file,"w") as Fid: json.dump(calc_data_dict,Fid));
+    with open(calc_data_file,"w") as Fid: json.dump(calc_data_dict,Fid);
     print('Parsed vasp data saved into {}'.format(calc_data_file))
 
