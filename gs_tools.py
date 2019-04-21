@@ -691,23 +691,85 @@ def _solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_setti
         with open(gs_file,'w') as gs_out:
             json.dump(gss,gs_out)
 
+        print("Solved GS structures on {} hull points.").format(len(gss))
+
         return _gs_converged
 
-def _writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run'):
+def _writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_settings.mson'):
     sm = StructureMatcher(ltol=0.3, stol=0.3, angle_tol=5, comparator=ElementComparator())
     
-    calculated_structures = []
+    calculated_structures = {}
+    targetdirs = {}
+    maxids = {}
     _was_generated = lambda x: 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
-    if os.path.isdir(outdir):
+    if os.path.isdir(vasprun):
         print("Checking previously enumerated structures.")
-        for root,dirs,files in os.walk(outdir):
+        for root,dirs,files in os.walk(vasprun):
             if _was_generated(files):
-                calculated_structures.append(Poscar.from_file(os.join(root,'POSCAR').structure))
+                parentdir = os.path.join(*root.split(os.sep)[0:-1])
+                with open(os.join(parentdir,'composition_by_site')) as comp_file:
+                    composition_old = json.load(comp_file)
+                    compstring_old = json.dumps(composition)
+                if compstring_old not in calculated_structures:
+                    calculated_structures[compstring_old]=[]
+                calculated_structures[compstring_old].append(Poscar.from_file(os.join(root,'POSCAR').structure)) 
+                if compstring_old not in targetdirs:
+                    targetdirs[compstring_old]=root.split(os.sep)[-1]
+                if compstring_old not in maxids:
+                    maxids[compstring_old]=max([int(idx) for idx in os.listdir(parentdir) if _RepresentsInt(idx)])
     else: 
-        print("Not checking versus previous calculations")
+        print("Previous calculation or generator setting file missing. Exiting")
+        return
     
     with open(gs_file) as gs_in:
         gss = json.load(gs_in)
-    gs_structures = {compstring:Structure.from_dict(gss[compstring]['gs_structure']) for compstring in gss}
+    
+    if os.path.isfile(vs_file):
+        with open(vs_file) as vs_in:
+            vasp_settings = json.load(vs_in)
+    else:
+        vasp_settings = None
+
+    for compstring in gss:
+        _unique = True
+        if compstring in calculated_structures:
+            gstruct = Structure.from_dict(gss[compstring]['gs_structure']
+            for ostruct in calculated_structures[compstring]:
+                if sm.fit(ostruct,gstruct)):
+                    print("GS for composition:\n{}\nalready calculated. Skipping.".format(compstring))
+                    _unique = False
+                    break
+        if _unique:
+            targetdir = os.path.join(vasprun,targetdirs[compstring])
+            writedir = os.path.join(targetdir,str(maxids[compstring]+1))
+            if not os.path.isdir(writedir): os.mkdir(writedir)
+            Poscar(gstruct.get_sorted_structure()).write_file(os.path.join(writedir,'POSCAR'))
+            vaspdir = os.path.join(writedir,'fm.0')
+            if vasp_settings:
+                print("Applying VASP settings",vasp_settings)
+                if 'functional' in vasp_settings:
+                    functional = vasp_settings['functional']
+                else:
+                    functional = 'PBE'
+                if 'num_kpoints' in vasp_settings:
+                    num_kpoints = vasp_settings['num_kpoints']
+                else:
+                    num_kpoints = 25
+                if 'additional_vasp_settings' in vasp_settings:
+                    additional = vasp_settings['additional_vasp_settings']
+                else:
+                    additional = None
+                if 'strain' in vasp_settings:
+                    strain = vasp_settings['strain']
+                else:
+                    strain = ((1.01,0,0),(0,1.05,0),(0,0,1.03))
+            
+                _write_vasp_inputs(gstruct,vaspdir,functional,num_kpoints,additional,strain)
+            else:
+                print("Using CEAuto default VASP settings.")
+                _write_vasp_inputs(gstruct,vaspdir)
+
+            print('New GS written to {}.'.format(writedir))
+
     
     

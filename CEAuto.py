@@ -69,9 +69,13 @@ if __name__ == "__main__":
                         Structure will be dropped when relaxation exceed this criteria.",type=str,\
                         default={'ltol':0.1,'stol':0.5,'angle_tol':5})
     parser.add_argument('--gensetting',help="Generator setting file. Will use old one if detected. This overwrites all other args.",\
-                        type=ste, default='generator_settings.mson')
+                        type=str, default='generator_settings.mson')
+    parser.add_argument('--vaspsetting',help="VASP setting file. Is a mson file. See doc of generator_tools.py for description.",type=str,default='vasp_settings.mson')
 
     parser.add_argument('-s','--solveGS',help="Solve for ground state with current CE", action='store_true')
+    parser.add_argument('--gsfile',help="Ground state storage file.", type=str, default='gs.mson')
+    parser.add_argument('--gssetting',help="Ground state solver settings.", type=str, default='gs_settings.mson')
+
     parser.add_argument('-r','--run',help="Submit vasp jobs for VASP directory", action='store_true')
 
     args = parser.parse_args()
@@ -80,35 +84,38 @@ if __name__ == "__main__":
     start_time = time.time()
     
     if args.generate:
-        if os.path.isfile('generator.mson'):
-            print("Using existing generator setup.")
-            with open('generator.mson','r') as generatorfile:
-            generator = StructureGenerator.from_dict(json.load(generatorfile))
+        # Generate new structures. (Multiple structures at one time, still random, peichen will implement Domain selection).
+                        
+        if os.path.isfile(args.gensetting):
+            print("Using exisiting generator setup in {}".format(args.gensetting))
+            with open(args.gensetting) as fin:
+                generator=StructureGenenrator.from_dict(json.load(fin))
         else:
-            print("Constructing new generator.")
+            print("No existing generator setup detected. Constructing a new one.")
             prim = CifParser(args.prim).get_structures()[0]
             compaxis = json.loads(args.compaxis) if args.compaxis else None
             enforceoccu = json.loads(args.enforceoccu) if args.compaxis else None
             transmat = json.loads(args.transmat) if args.transmat else None
+            vasp_settings = json.loads(args.vaspsetting) if os.path.isfile(args.vaspsetting) else None
+
             if os.path.isfile(args.cefile):
                 print("Generator using existing CE.")
                 cefile = args.cefile
             else:
                 print("No existing CE, using ewald MC.")
                 cefile = None
-            
-            if os.path.isfile(args.gensetting):
-                with open(args.gensetting) as fin:
-                    generator=StructureGenenrator.from_dict(json.load(fin))
-            else:
+
                 generator = StructureGenerator(prim, args.vasprun, enforceoccu, args.samplestep, args.scs,args.numsc,\
-                            compaxis,transmat,cefile)
+                            compaxis,transmat,cefile,vasp_settings)
 
             if generator.generate_structures():
                 generator.write_structures()
                 generator.write_settings()
-
+            else:
+                print("Generator aborted. Check the reason carefully.")
+ 
     elif args.fit:
+        #Fitting a CE model
         maxdeformation=json.loads(args.maxdeformation)
 
         _load_data(args.prim,args.calcdata,args.vasprun,maxdeformation)
@@ -116,7 +123,22 @@ if __name__ == "__main__":
         _fit_ce(args.calcdata,args.cefile,ceradius)
 
     elif args.solveGS:
-        
+        #Solving and updating GS structures.
+        if os.path.isfile(args.gssetting):
+            print("Using existing GS solver settings from {}".format(args.gssetting))
+            gs_settings = json.load(args.gssetting)
+        else:
+            print("No GS solver setting file detected. Using default values.")
+            gs_setting = {}
 
+        _solvegs_for_hull(args.cefile,args.calcdata,args.gensetting,args.gsfile,gs_setting)
+        print("Writing new GS to VASP calculations.")
+        _writegss_to_vasprun(args.gsfile,args.vasprun,args.vaspsetting)
+
+    elif args.run:
+        _run_vasp(args.vasprun)
+
+    else:
+        print("No job selected. You have to tell me what to do!")
 
     print("--- %s seconds ---" % (time.time() - start_time)) 

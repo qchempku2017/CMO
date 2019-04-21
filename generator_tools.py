@@ -323,7 +323,7 @@ def _write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_va
         if Sym == 'Zr': POTSyms[i]='Zr_sv';
     Potcar(POTSyms,functional=functional).write_file(os.path.join(VASPDir,'POTCAR'));
 
-def _gen_vasp_inputs(SearchDir):
+def _gen_vasp_inputs(SearchDir,functional='PBE', num_kpoints=25,add_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
     """
     Search through directories, find POSCARs and generate FM VASP inputs.
     """
@@ -334,7 +334,8 @@ def _gen_vasp_inputs(SearchDir):
     for [Root,File] in POSDirs:
         print("Writing VASP inputs for {}/{}".format(Root,File));
         Str=Poscar.from_file(os.path.join(Root,File)).structure
-        VASPDir= os.path.join(Root,'fm.0'); _write_vasp_inputs(Str,VASPDir);
+        VASPDir= os.path.join(Root,'fm.0'); 
+        _write_vasp_inputs(Str,VASPDir,functional,num_kpoints,add_vasp_settings,strain);
 
 def _generate_axis_ref(compounds):
     """
@@ -527,7 +528,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
         return SCLst,None
 
 class StructureGenerator(MSONable):
-    def __init__(prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = None):
+    def __init__(prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = None,vasp_settings='vasp_settings.mson'):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
               rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
@@ -549,6 +550,7 @@ class StructureGenerator(MSONable):
         transmat: Sometimes your primitive cell is not symmetric enough, just like the case in the 2-site rhombohedral primitive cell of rock salt.
               You can apply a transformation before shape enumeration.
         ce_file: the file that contains a full record of the current cluster expansion work, including ce.as_dict, structures, ecis, etc.
+        vasp_settings: setting parameters for vasp calcs. Is in dictionary form. Keys are 'functional','num_kpoints','additional_vasp_settings'(in dictionary form), 'strain'(in matrix or list form)
         """
 
         self.prim = prim
@@ -563,6 +565,13 @@ class StructureGenerator(MSONable):
         print("Using transformation matrix {}".format(transmat))
         self.ce_file = ce_file
         self.outdir =  outdir
+        if os.path.isfile(vasp_settings):
+            print("Applying VASP settings in {}.".format(vasp_settings))
+            with open(vasp_settings) as vs_in:
+                self.vasp_settings=json.load(vs_in)
+        else:
+            print("Applying CEAuto default VASP settings.")
+            self.vasp_settings = None
 
     def generate_structures(self):
         try:
@@ -571,11 +580,29 @@ class StructureGenerator(MSONable):
             _get_mc_structs(self.ce_file,self.outdir,sc_ro,Prim=self.prim,all_axis=all_axis,TLst=[500, 1500, 10000])
             return True
         except:
-            print("Generator aborted. Check the reason carefully.")
             return False
 
     def write_structures(self):
-        _gen_vasp_inputs(self.outdir)
+        if self.vasp_settings:
+            if 'functional' in self.vasp_settings:
+                functional = self.vasp_settings['functional']
+            else:
+                funtional = 'PBE'
+            if 'num_kpoints' in self.vasp_settings:
+                num_kpoints = self.vasp_settings['num_kpoints']
+            else:
+                num_kpoints = 25
+            if 'additional_vasp_settings' in self.vasp_settings:
+                additional = self.vasp_settings['additional_vasp_settings']
+            else:
+                additional = None
+            if 'strain' in self.vasp_settings:
+                strain = self.vasp_settings['strain']
+            else:
+                strain = ((1.01,0,0),(0,1.05,0),(0,0,1.03))
+            _gen_vasp_inputs(self.outdir,functional,num_kpoints,additional,strain)
+        else:
+            _gen_vasp_inputs(self.outdir)
 
 ####
 # I/O interface for saving only, from_dict method not required
@@ -584,14 +611,24 @@ class StructureGenerator(MSONable):
     def from_dict(self,d):
         prim = d['prim'].from_dict()
         generator = cls(prim)
-        generator.enforced_occu = d['enforced_occu']
-        generator.comp_axis = d['comp_axis']
-        generator.sample_step = d['sample_step']
-        generator.max_sc_size = d['max_sc_size']
-        generator.sc_selec_num = d['sc_selec_num']
-        generator.transmat = d['transmat']
-        generator.ce_file = d['ce_file']
-        generator.outdir = d['outdir']
+        if 'enforced_occu' in d:
+            generator.enforced_occu = d['enforced_occu']
+        if 'comp_axis' in d:
+            generator.comp_axis = d['comp_axis']
+        if 'sample_step' in d:
+            generator.sample_step = d['sample_step']
+        if 'max_sc_size' in d:
+            generator.max_sc_size = d['max_sc_size']
+        if 'sc_selec_num' in d:
+            generator.sc_selec_num = d['sc_selec_num']
+        if 'transmat' in d:
+            generator.transmat = d['transmat']
+        if 'ce_file' in d:
+            generator.ce_file = d['ce_file']
+        if 'outdir' in d:
+            generator.outdir = d['outdir']
+        if 'vasp_settings' in d:
+            generator.vasp_settings = d['vasp_settings']
         return generator
 
     def as_dict(self):
@@ -602,8 +639,9 @@ class StructureGenerator(MSONable):
                 'max_sc_size':self.max_sc_size,\
                 'sc_selec_num':self.sc_selec_num,\
                 'transmat':self.transmat,\
-                'ce_file':self.ce_file,
-                'outdir':self.outdir
+                'ce_file':self.ce_file,\
+                'outdir':self.outdir,\
+                'vasp_settings':self.vasp_settings,\
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
                }

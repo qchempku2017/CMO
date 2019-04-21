@@ -115,4 +115,9 @@ def _Is_Neutral_Occu(occu,specieChgDict):
             totalChg += site[specie]*specieChgDict[specie]
     return abs(totalChg)<0.001
 
-
+def _RepresentsInt(s):
+    try: 
+        int(s)
+        return True
+    except ValueError:
+        return False
