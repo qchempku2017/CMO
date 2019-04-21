@@ -122,7 +122,7 @@ def _assign_ox_states(struct,magmoms):
     """
     # Oxidation states corresponding to a range of magnetic moments (min, max)
     ###OXRange imported from OxData.py
-    DefaultOx={'Li':1,'F':-1,'O':-2}; OxLst=[];
+    DefaultOx={'Li':1,'F':-1,'O':-2, 'Mg':2, 'Ca':2 }; OxLst=[];
     # Restricted Ox state for O to 2 here, but actually can be one. There is currently
     # no good method to assign since O magmoms are usually highly inaccurate. We have 
     # to do that.
