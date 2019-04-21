@@ -51,6 +51,7 @@ class CEAutojob(MSONable):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-f','--fit', help="Fit CE based on VASP outputs", action='store_true')
+    parser.add_argument('--ceradius', help="Cluster radius setting", type=str, default=None)
     
     parser.add_argument('-g','--generate', help="Generate MC structures from this CE", action='store_true')
     parser.add_argument('--prim', help="cif file of primitive cell to construct the CE work from", type=str, default='prim.cif')
@@ -62,12 +63,16 @@ if __name__ == "__main__":
                       index. Example: --enforceoccu='[0.0,1.0,1.0,1.0]'. ''',type=str,default=None)
     parser.add_argument('--samplestep',help="Sampling step of number of species occupying sublattice sites.",type=int,default=1)
     parser.add_argument('--scs', help="Max supercell matrix determinant to be enumerated (must be integer)",type=int,default=64)
-    parser.add_argument('--cefile',help="Read and use a existing CE file.",default='')
-     
+    parser.add_argument('--cefile',help="Read and use a existing CE file.",default='ce.mson')
+    parser.add_argument('--calcdata',help="Store all analyzed vasp running data in this mson file.",type=str,default='calcdata.mson')      parser.add_argument('--vasprun',help="Store all vasp running data under this directory.",type=str,default='vasp_run')
+    parser.add_argument('--maxdeformation',help="Maximum tolerable deformation between input and relaxed structures. \
+                        Structure will be dropped when relaxation exceed this criteria.",type=str,\
+                        default={'ltol':0.1,'stol':0.5,'angle_tol':5})
+    parser.add_argument('--gensetting',help="Generator setting file. Will use old one if detected. This overwrites all other args.",\
+                        type=ste, default='generator_settings.mson')
+
     parser.add_argument('-s','--solveGS',help="Solve for ground state with current CE", action='store_true')
     parser.add_argument('-r','--run',help="Submit vasp jobs for VASP directory", action='store_true')
-
-    parser.add_argument('--vasprun',help="Store all vasp running data under this directory.",type=str,default='vasp_run')
 
     args = parser.parse_args()
     import time
@@ -85,7 +90,33 @@ if __name__ == "__main__":
             compaxis = json.loads(args.compaxis) if args.compaxis else None
             enforceoccu = json.loads(args.enforceoccu) if args.compaxis else None
             transmat = json.loads(args.transmat) if args.transmat else None
+            if os.path.isfile(args.cefile):
+                print("Generator using existing CE.")
+                cefile = args.cefile
+            else:
+                print("No existing CE, using ewald MC.")
+                cefile = None
+            
+            if os.path.isfile(args.gensetting):
+                with open(args.gensetting) as fin:
+                    generator=StructureGenenrator.from_dict(json.load(fin))
+            else:
+                generator = StructureGenerator(prim, args.vasprun, enforceoccu, args.samplestep, args.scs,args.numsc,\
+                            compaxis,transmat,cefile)
 
-            generator = StructureGenerator(prim, args.vasprun, enforceoccu, args.samplestep, args.scs,args.numsc,compaxis,transmat)
+            if generator.generate_structures():
+                generator.write_structures()
+                generator.write_settings()
+
+    elif args.fit:
+        maxdeformation=json.loads(args.maxdeformation)
+
+        _load_data(args.prim,args.calcdata,args.vasprun,maxdeformation)
+        ceradius = json.loads(args.ceradius) if args.ceradius else:None
+        _fit_ce(args.calcdata,args.cefile,ceradius)
+
+    elif args.solveGS:
+        
+
 
     print("--- %s seconds ---" % (time.time() - start_time)) 

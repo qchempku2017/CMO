@@ -149,6 +149,9 @@ def _load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vas
         vaspdir: List of directories to search for VASP runs
         prim_file: primitive cell file.
         ce_data_file: output database file.
+        max_deformation: max tolerable deformation between input 
+                         and output structure. Any relaxation over
+                         this criteria should be dropped!
 
     This function parses existing vasp calculations, does mapping check, assigns charges and writes into the calc_data file 
     mentioned in previous functions. What we mean by mapping check here, is to see whether a deformed structure can be mapped
@@ -219,11 +222,12 @@ def _load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vas
 
                 with open(os.path.join(parent_parent_root,'composition_by_site')) as compfile:
                     composition = json.load(compfile)
+                    compstring = json.dumps(composition)
                 with open(os.path.join(parent_root,'supermat')) as supermat_file:
                     supermat = json.load(supermat_file)
                 
-                if composition not in calc_data_dict['compositions']:
-                    calc_data_dict['compositions'][composition]=[]
+                if compstring not in calc_data_dict['compositions']:
+                    calc_data_dict['compositions'][compstring]=[]
 
                 # Checking site deformation and mapping.
                 sm = StructureMatcher(stol=max_deformation['stol'], ltol=max_deformation['ltol'],\
@@ -235,7 +239,7 @@ def _load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vas
 
                 strict_sm = StructureMatcher(stol=0.1, ltol=0.1, angle_tol=1, comparator=ElementComparator())
                 _is_unique = True
-                for entry in calc_data_dict['compositons'][composition]:
+                for entry in calc_data_dict['compositons'][compstring]:
                     entry_struct = Structure.from_dict(entry['relaxed_structure'])
                     if strict_sm.fit(entry_struct,relaxed_struct):
                         _is_unique = False
@@ -259,7 +263,7 @@ def _load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vas
                         if _did_ax_decomp:
                             print('Selected axis decomposition, but instance {} is not axis decomposed!'.format(root))
                             new_entry['axis'] = None
-                    calc_data_dict['compositions'][composition].append(new_entry)
+                    calc_data_dict['compositions'][compstring].append(new_entry)
 
             except: print("\tParsing error - calculation not finished?")
         else:

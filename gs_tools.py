@@ -1,6 +1,7 @@
 from __future__ import division
 
 from pyabinitio.cluster_expansion.ce import ClusterExpansion,Cluster,SymmetrizedCluster
+
 from monty.json import MSONable
 import json
 import numpy as np
@@ -11,11 +12,13 @@ from copy import deepcopy
 from operator import mul
 from functools import reduce
 import random
+
 from itertools import combinations,permutations
 from pymatgen.analysis.ewald import EwaldSummation
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer, SymmOp
 from pymatgen.util.coord import coord_list_mapping_pbc
 from pymatgen import Structure,PeriodicSite
+from pymatgen.analysis.structure_matcher import StructureMatcher
 
 from global_tools import *
 
@@ -631,3 +634,80 @@ class GScanonical(MSONable):
                 '@class':self.__class__.__name__\
                }
 
+####
+# Canonical to Semi-grand
+####
+
+def _solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson',\
+                      gs_settings={}):
+    """
+    Here we generate all the canonical ground states for the hull in calc_data_file, and store them in gs_file.
+    Output:
+        A boolean variable. Indicating whether the GS has converged for hull. Currently only judging from energy.
+    """
+    if not(os.path.isfile(calc_data_file)):
+        print("No valid calulations detected, can't solve GS!")
+        return
+
+    else:
+        with open(calc_data_file) as calc_data:
+            calcdata = json.load(calc_data)
+        with open(ce_file) as ce_data:
+            cedata = json.load(ce_data)
+
+        ecis = cedata['ecis']
+        ce = ClusterExpansion.from_dict(cedata['cluster_expansion'])
+        gss = {}
+
+        for compstring in calcdata:
+            composition=json.loads(compstring)
+            gs_socket = GScanonical(ce,ecis,composition)
+            if 'maxsupercell' in gs_settings:
+                gs_socket.maxsupercell=gs_settings['maxsupercell']
+            if 'num_of_sizes' in gs_settings:
+                gs_socket.num_of_sizes=gs_settings['num_of_sizes']
+            if 'selec' in gs_settings:
+                gs_socket.selec=gs_settings['selec']
+            if 'ubsolver' in gs_settings:
+                gs_socket.ubsolver=gs_settings['ubsolver']
+              
+            gss[compstring]={}
+            if gs_socket.solve():
+                gss[compstring]['gs_structure']=gs_socket.str_upper.as_dict()
+                gss[compstring]['gs_energy']=gs_socket.e_upper
+
+        if os.path.isfile(gs_file):
+            with open(gs_file) as gs_in:
+                gss_old = json.load(gs_in)
+            _gs_converged = True
+            for compstring in gss:
+                if 'gs_energy' not in gss_old[compstring] or 'gs_energy' not in gss[compstring] or \
+                        abs(gss_old[compstring]['gs_energy']-gss[compstring]['gs_energy'])>0.001:
+                            _gs_converged = False
+                            break
+        else:
+            _gs_converged = False
+
+        with open(gs_file,'w') as gs_out:
+            json.dump(gss,gs_out)
+
+        return _gs_converged
+
+def _writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run'):
+    sm = StructureMatcher(ltol=0.3, stol=0.3, angle_tol=5, comparator=ElementComparator())
+    
+    calculated_structures = []
+    _was_generated = lambda x: 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
+    if os.path.isdir(outdir):
+        print("Checking previously enumerated structures.")
+        for root,dirs,files in os.walk(outdir):
+            if _was_generated(files):
+                calculated_structures.append(Poscar.from_file(os.join(root,'POSCAR').structure))
+    else: 
+        print("Not checking versus previous calculations")
+    
+    with open(gs_file) as gs_in:
+        gss = json.load(gs_in)
+    gs_structures = {compstring:Structure.from_dict(gss[compstring]['gs_structure']) for compstring in gss}
+    
+    

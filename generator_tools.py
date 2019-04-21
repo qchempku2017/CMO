@@ -84,18 +84,27 @@ def _get_mc_structs(ce_file,outdir='vasp_run',SCLst,Prim=None,all_axis=None,TLst
        useX: a list of compounds of which we may want to calculate component.
     '''
     print('#### MC Initialization ####')
-    calculated_structures = []
+    calculated_structures = {}
+
+    _was_generated = lambda x: 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
+    if os.path.isdir(outdir):
+        print("Checking previously enumerated structures.")
+        for root,dirs,files in os.walk(outdir):
+            if _was_generated(files):
+                parentdir = os.path.join(*root.split(os.sep)[0:-1])
+                with open(os.path.join(parentdir,'composition_by_site')) as RO_file:
+                    RO_old = json.load(RO_file)
+                    RO_old_string = json.dumps(RO_old)
+                if RO_old_string not in calculated_structures:
+                    calculated_structures[RO_old_string]=[]
+                calculated_structures[RO_old_string].append(Poscar.from_file(os.join(root,'POSCAR').structure))
+    else: 
+        print("Not checking versus previous calculations")
+        calculated_structures = None
+ 
     if ce_file:
         # Load cluster expansion
         with open(ce_file,'r') as Fid: cedata = json.load(Fid);
-        _was_generated = lambda x: 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
-        if os.path.isdir(outdir):
-            print("Checking previously enumerated structures.")
-            for root,dirs,files in os.walk(outdir):
-                if _was_generated(files):
-                    calculated_structures.append(Poscar.from_file(os.join(root,'POSCAR').structure))
-        else: 
-            print("Not checking versus previous calculations")
         CE=ClusterExpansion.from_dict(cedata['cluster_expansion']); 
         ECIs=cedata['ecis']; 
         print('ce information:'); print(ce.structure);
@@ -175,7 +184,15 @@ def _get_mc_structs(ce_file,outdir='vasp_run',SCLst,Prim=None,all_axis=None,TLst
         # Integrate Wenxuan's solver here, and abandon MC annealing. (In the future.)#
         RO_int = [{specie:int(round(site[specie]*scs)) for specie in site} for site in RO] 
         #convert frac occupation back to integers.
-        RO_string = json.dumps(RO_int)
+        sp_list = []
+        for site_occu in RO_int:
+            sp_list.extend(site_occu.values())
+        _gcd = _GCD_List(sp_list)
+        RO_reduced_int=[{sp:site_occu[sp]//_gcd for sp in site_occu} for site_occu in RO_int]
+
+
+        #Reduce occupation numbers by GCD.
+        RO_string = json.dumps(RO_reduced_int)
         if RO_string not in mc_structs:
             mc_structs[RO_string]=[]
         
@@ -222,14 +239,16 @@ def _get_mc_structs(ce_file,outdir='vasp_run',SCLst,Prim=None,all_axis=None,TLst
             unique_structs[RO_string] = []
         for struct,T in structs:
             unique = True
-            for ostruct in calculated_structures:
-                if sm.fit(struct, ostruct):
-                    unique = False
-                    break
-            for ostruct,T in unique_structs[RO_string]:
-                if sm.fit(struct, ostruct):
-                    unique = False
-                    break
+            if RO_string in calculated_structures:
+                for ostruct in calculated_structures[RO_string]:
+                    if sm.fit(struct, ostruct):
+                        unique = False
+                        break
+            if unique:
+                for ostruct,T in unique_structs[RO_string]:
+                    if sm.fit(struct, ostruct):
+                        unique = False
+                        break
             if unique:
                 unique_structs[RO_string].append((struct,T))
                 unqCnt += 1
@@ -546,10 +565,15 @@ class StructureGenerator(MSONable):
         self.outdir =  outdir
 
     def generate_structures(self):
-        sc_ro,all_axis =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
+        try:
+            sc_ro,all_axis =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
                                         self.sample_step, self.sc_selec_num, self.comp_axis, self.transmat)
-        _get_mc_structs(self.ce_file,self.outdir,sc_ro,Prim=self.prim,all_axis=all_axis,TLst=[500, 1500, 10000])
-        
+            _get_mc_structs(self.ce_file,self.outdir,sc_ro,Prim=self.prim,all_axis=all_axis,TLst=[500, 1500, 10000])
+            return True
+        except:
+            print("Generator aborted. Check the reason carefully.")
+            return False
+
     def write_structures(self):
         _gen_vasp_inputs(self.outdir)
 
@@ -559,7 +583,7 @@ class StructureGenerator(MSONable):
     @classmethod
     def from_dict(self,d):
         prim = d['prim'].from_dict()
-        generator = StructureGenerator(prim)
+        generator = cls(prim)
         generator.enforced_occu = d['enforced_occu']
         generator.comp_axis = d['comp_axis']
         generator.sample_step = d['sample_step']
@@ -583,4 +607,7 @@ class StructureGenerator(MSONable):
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
                }
-
+    
+    def write_settings(self,setting='generator_settings.mson'):
+        with open(setting,'w') as setting_file:
+            json.dump(self.as_dict(),setting_file)
