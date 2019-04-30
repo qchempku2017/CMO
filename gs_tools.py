@@ -30,9 +30,11 @@ MAXSAT_PATH = './solvers/'
 MAXSAT_CUTOFF = 600
 COMPLETE_MAXSAT = ['akmaxsat','ccls_akmaxsat']
 INCOMPLETE_MAXSAT = ['CCLS2015']
-"In this file we will provide socket functions to ground state solver I/O."
-"For number of hard clauses issue, we firstly try to reduce the problem size
-down to 16 sites."
+""" 
+In this file we will provide socket functions to ground state solver I/O. 
+For number of hard clauses issue, we firstly try to reduce the problem size
+down to 16 sites.
+"""
 
 #####
 # Tool functions
@@ -256,7 +258,7 @@ class GScanonical(MSONable):
             min_size = sum(self.composition[0].values())
             enumrange = list(range(int(self.maxsupercell/self.num_of_sizes),self.maxsupercell+1,\
                               int(self.maxsupercell/self.num_of_sizes)))
-            enumrange = [size if size>min_size for size in enumrange]
+            enumrange = [size for size in enumrange if size>min_size]
             if len(enumrange)==0:
                 print('No enumerated size acceptable. You should consider adjusting your compostion enumeration\
                        step in generator, or adjust maxsupercell to a proper value (Warning: a value >16 not \
@@ -733,9 +735,9 @@ def _writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_sett
     for compstring in gss:
         _unique = True
         if compstring in calculated_structures:
-            gstruct = Structure.from_dict(gss[compstring]['gs_structure']
+            gstruct = Structure.from_dict(gss[compstring]['gs_structure'])
             for ostruct in calculated_structures[compstring]:
-                if sm.fit(ostruct,gstruct)):
+                if sm.fit(ostruct,gstruct):
                     print("GS for composition:\n{}\nalready calculated. Skipping.".format(compstring))
                     _unique = False
                     break
