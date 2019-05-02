@@ -60,18 +60,21 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
     print('#### Supercell Enumeration ####')
     scs=[]
     trans_size = int(abs(np.linalg.det(transmat))) if transmat else 1
+
     for det in range(int(maxDet/4),maxDet+1,int(maxDet/4)):
-        scs.extend(_Get_Hermite_Matricies(int(det/trans_size)))
+        scs.extend(Get_Hermite_Matricies(int(det/trans_size)))
     print('Generated %d supercell matrices with max determinant %d'%(len(scs),maxDet))
     #print('Supercell Matrices:\n',scs)
     print('Picking %d random skew supercells and %d random rectangular supercells.'%(nSk,nRect))
     _is_diagonal = lambda sc: (sc[0][1]==0 and sc[0][2]==0 and sc[1][2]==0)
     scs_sk = [sc for sc in scs if not _is_diagonal(sc)]
     scs_re = [sc for sc in scs if _is_diagonal(sc)]
-    selected_scs = random.sample(scs_sk,nSk)+random.sample(scs_re,nRect)
+    ns = nSk if nSk<=len(scs_sk) else len(scs_sk)
+    nr = nRect if nRect<=len(scs_re) else len(scs_re)
+    selected_scs = random.sample(scs_sk,ns)+random.sample(scs_re,nr)
     #print("scs before trans:",selected_scs)
     if transmat:
-        selected_scs=[_mat_mul(sc,transmat) for sc in selected_scs]
+        selected_scs=[mat_mul(sc,transmat) for sc in selected_scs]
     return selected_scs
 
 def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst=[500, 1500, 10000]):
@@ -133,9 +136,9 @@ def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst
         for subLat in RO:
             for specie in sublat:
                 if specie not in ions: ions.append(specie)
-        #cations = [_Back_Modify(ion) for ion in ions if (ion[-1]=='+' or (ion[-1]!='+' and ion[-1]!='-'))]
+        #cations =[Back_Modify(ion) for ion in ions if (ion[-1]=='+' or (ion[-1]!='+' and ion[-1]!='-'))]
         #cations = cations
-        #anions = [_Back_Modify(ion) for ion in ions if ion[-1]=='-']
+        #anions = [Back_Modify(ion) for ion in ions if ion[-1]=='-']
         #anions = anions 
         #print('cations',cations,'anions',anions)
 
@@ -187,7 +190,7 @@ def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst
         sp_list = []
         for site_occu in RO_int:
             sp_list.extend(site_occu.values())
-        _gcd = _GCD_List(sp_list)
+        _gcd = GCD_List(sp_list)
         RO_reduced_int=[{sp:site_occu[sp]//_gcd for sp in site_occu} for site_occu in RO_int]
 
 
@@ -454,8 +457,8 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
         #print(siteOccu)
         siteOccuMod = {}
         for specie in siteOccu:
-            specieMod = _Modify_Specie(specie)
-            if specieMod not in specieChgDict: specieChgDict[specieMod]=_GetIonChg(specieMod)
+            specieMod = Modify_Specie(specie)
+            if specieMod not in specieChgDict: specieChgDict[specieMod]=GetIonChg(specieMod)
             siteOccuMod[specieMod]=float(siteOccu[specie])
         occuDicts.append(siteOccuMod)
     #print(occuDicts)
@@ -480,7 +483,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
             poss_Occu_Sites.append(allOccu_for_Site)
         
         allOccu_for_Sites = [list(site_combo) for site_combo in itertools.product(*poss_Occu_Sites) \
-                             if _Is_Neutral_Occu(site_combo,specieChgDict) ]
+                             if Is_Neutral_Occu(site_combo,specieChgDict) ]
 
         #print(allOccu_for_Sites)
         #Calculate compositions and fractional occupation for each site.
@@ -528,7 +531,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
         return SCLst,None
 
 class StructureGenerator(MSONable):
-    def __init__(prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = None,vasp_settings='vasp_settings.mson'):
+    def __init__(self,prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = None,vasp_settings='vasp_settings.mson'):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
               rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
@@ -554,7 +557,7 @@ class StructureGenerator(MSONable):
         """
 
         self.prim = prim
-        if self.enforced_occu:
+        if enforced_occu:
             print("Occupation on each site at least:",enforced_occu)
         self.enforced_occu = enforced_occu
         self.sample_step=sample_step

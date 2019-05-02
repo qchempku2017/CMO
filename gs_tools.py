@@ -89,7 +89,7 @@ def _make_up_twobodies(ce_old,eci_old,clus_sup):
                 if site.species_and_occu.num_atoms < 0.99 or len(site.species_and_occu) > 1]
     exp_str = Structure.from_sites(exp_sites)
     #print("exp_str",exp_str)
-    bits = _get_bits(exp_str)
+    bits = get_bits(exp_str)
     nbits = np.array([len(b) - 1 for b in bits])
 
     #ce_test = ClusterExpansion.from_radii(exp_str,{2:7.0})
@@ -216,7 +216,7 @@ class GScanonical(MSONable):
         sp_list = []
         for site_occu in composition:
             sp_list.extend(site_occu.values())
-        self._comp_step = _GCD_List(sp_list)
+        self._comp_step = GCD_List(sp_list)
         # Find the enumeration step for composition, and this will be the minimum enumerated supercell size.
         self.composition=[{sp:site_occu[sp]//self._comp_step for sp in site_occu} for site_occu in composition]
 
@@ -267,12 +267,12 @@ class GScanonical(MSONable):
 
             for size in enumrange:
                 print("Enumerating for size %d"%size)
-                _enumlist.extend(_Get_Hermite_Matrices(int(size/scale)))
+                _enumlist.extend(Get_Hermite_Matrices(int(size/scale)))
 
             print("Randomly picking supercell matrices.")
             self._enumlist=random.sample(_enumlist,self.selec)
             if self.transmat: 
-                self._enumlist=[_mat_mul(sc,self.transmat) for sc in self._enumlist]
+                self._enumlist=[mat_mul(sc,self.transmat) for sc in self._enumlist]
             self._enumlist=sorted(self._enumlist,key=lambda a:(abs(np.linalg.det(a)),\
                                  np.linalg.norm(a[0]),np.linalg.norm(a[1]),np.linalg.norm(a[2])))
             print("Enumerated supercells generated!")
@@ -327,9 +327,9 @@ class GScanonical(MSONable):
                     H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
 
                     #Ewald energy E_ew = (q+r)*H*(q+r)'. I used a stupid way to get H but quite effective.
-                    supbits = _get_bits(clus_sup_new.supercell)
-                    r = np.array([_GetIonChg(bits[-1]) for bits in supbits])
-                    chg_bits = [[_GetIonChg(bit)-_GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
+                    supbits = get_bits(clus_sup_new.supercell)
+                    r = np.array([GetIonChg(bits[-1]) for bits in supbits])
+                    chg_bits = [[GetIonChg(bit)-GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
                     b_clusters = []
                     eci_return = []
 
@@ -542,7 +542,7 @@ class GScanonical(MSONable):
 
         ce_new = self.ces_new[mat_id]
         cs = ce_new.supercell_from_matrix(self.enumlist[mat_id])
-        cs_bits = _get_bits(cs.supercell)
+        cs_bits = get_bits(cs.supercell)
         upper_sites = []
         for s,site in enumerate(site_specie_ids):
             should_be_ref = True
@@ -718,7 +718,7 @@ def _writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_sett
                 if compstring_old not in targetdirs:
                     targetdirs[compstring_old]=root.split(os.sep)[-1]
                 if compstring_old not in maxids:
-                    maxids[compstring_old]=max([int(idx) for idx in os.listdir(parentdir) if _RepresentsInt(idx)])
+                    maxids[compstring_old]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
     else: 
         print("Previous calculation or generator setting file missing. Exiting")
         return

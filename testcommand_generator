@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
-./CEAuto.py -g --compaxis="['MgO','CaO']" --transmat='[[1,1,-1],[1,-1,1],[-1,1,1]]' --samplestep=2 --enforceoccu='[1.0,1.0]'
+./CEAuto.py -g --compaxis='["MgO","CaO"]' --transmat='[[1,1,-1],[1,-1,1],[-1,1,1]]' --samplestep=2 --enforceoccu='[1.0,1.0]'
 
+# compaxis is a list of strings converted into list

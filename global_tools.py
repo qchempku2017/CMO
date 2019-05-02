@@ -12,9 +12,10 @@ from itertools import permutations,product
 from functools import partial,reduce
 
 ##################################
-## General tools that will be frequently cross referenced
+## General tools that will be frequently cross referenced.
+## Do not add underscore before since that makes them private!!
 ##################################
-def _GCD(a,b):
+def GCD(a,b):
     """ The Euclidean Algorithm """
     a = abs(a)
     b = abs(b)
@@ -22,15 +23,15 @@ def _GCD(a,b):
         a, b = b%a, a
     return b    
         
-def _GCD_List(lst):
+def GCD_List(lst):
     """ Finds the GCD of numbers in a list.
 	Input: List of numbers you want to find the GCD of
 		E.g. [8, 24, 12]
 	Returns: GCD of all numbers, 4 
     """
-    return reduce(_GCD, lst)
+    return reduce(GCD, lst)
 
-def _get_bits(structure):
+def get_bits(structure):
     """
     Helper method to compute list of species on each site.
     Includes vacancies
@@ -46,7 +47,7 @@ def _get_bits(structure):
         all_bits.append(bits)
     return all_bits
 
-def _GetIonChg(ion):
+def GetIonChg(ion):
     """
     This tool function helps to read the charge from a given specie(in string format).
     """
@@ -59,7 +60,7 @@ def _GetIonChg(ion):
     else:
         return 0
 
-def _factors(n):
+def factors(n):
     """
     This function take in an integer n and computes all integer multiplicative factors of n
 
@@ -67,7 +68,7 @@ def _factors(n):
     return set(reduce(list.__add__,
                       ([i, n // i] for i in range(1, int(n ** 0.5) + 1) if n % i == 0)))
 
-def _Get_Hermite_Matricies(Num):
+def Get_Hermite_Matricies(Num):
     """
     This function take in an integer and computes all
     Hermite normal matricies with determinant equal to this integer
@@ -77,7 +78,7 @@ def _Get_Hermite_Matricies(Num):
     clustersupercell.supercell_from_sc does not take an np.matrix! It takes a matrix-like
     3*3 list!!!
     """
-    Mats = []; Factors = list(_factors(Num)); Factors *= 3;
+    Mats = []; Factors = list(factors(Num)); Factors *= 3;
     for Perm in set(permutations(Factors, 3)):
         if reduce(mul, Perm) == Num:
             Mat = np.array([[Perm[0], 0, 0], [0, Perm[1], 0], [0, 0, Perm[2]]])
@@ -89,33 +90,33 @@ def _Get_Hermite_Matricies(Num):
                     if LMat not in Mats: Mats.append(LMat);
     return Mats;
 
-def _mat_mul(mat1,mat2):
+def mat_mul(mat1,mat2):
     A = np.matrix(mat1)
     B = np.matrix(mat2)
     return (A*B).tolist()
 
-def _FindSpecieSite(specie,occuDict):
+def FindSpecieSite(specie,occuDict):
     for site in occuDict:
         if specie in occuDict[site]: return site
 
-def _Modify_Specie(specie):
+def Modify_Specie(specie):
     if not specie[-2].isdigit():
         specie = specie[:-1]+'1'+specie[-1]
     return specie
 
-def _Back_Modify(specie):
+def Back_Modify(specie):
     if specie[-2]=='1':
         specie = specie[:-2]+specie[-1]
     return specie
 
-def _Is_Neutral_Occu(occu,specieChgDict):
+def Is_Neutral_Occu(occu,specieChgDict):
     totalChg = 0
     for site in occu:
         for specie in site:
             totalChg += site[specie]*specieChgDict[specie]
     return abs(totalChg)<0.001
 
-def _RepresentsInt(s):
+def RepresentsInt(s):
     try: 
         int(s)
         return True

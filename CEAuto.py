@@ -100,7 +100,6 @@ if __name__ == "__main__":
             compaxis = json.loads(args.compaxis) if args.compaxis else None
             enforceoccu = json.loads(args.enforceoccu) if args.compaxis else None
             transmat = json.loads(args.transmat) if args.transmat else None
-            vasp_settings = json.loads(args.vaspsetting) if os.path.isfile(args.vaspsetting) else None
 
             if os.path.isfile(args.cefile):
                 print("Generator using existing CE.")
@@ -110,7 +109,7 @@ if __name__ == "__main__":
                 cefile = None
 
                 generator = StructureGenerator(prim, args.vasprun, enforceoccu, args.samplestep, args.scs,args.numsc,\
-                            compaxis,transmat,cefile,vasp_settings)
+                            compaxis,transmat,cefile,args.vaspsetting)
 
             if generator.generate_structures():
                 generator.write_structures()
