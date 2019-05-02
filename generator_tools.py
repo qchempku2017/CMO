@@ -115,7 +115,7 @@ def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst
 
     else:
         # No existing cluster expansion, we are building form start - use electrostatics only
-        print("Not checking versus previous calculations")
+        print("Not checking previous cluster expansion, using ewald as sampling criteria.")
         CE=ClusterExpansion.from_radii(Prim,{2: 1},ltol=0.3,stol=0.2,angle_tol=2,\
                                        supercell_size='num_sites',use_ewald=True,use_inv_r=False,eta=None);
         ecis=np.zeros(CE.n_bit_orderings+1); ecis[-1]=1;
@@ -132,18 +132,13 @@ def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst
         #print(clusSC.supercell)
         #print(clusSC.bits)
         # Define cation/anion sublattices
-        ions=[]
-        for subLat in RO:
-            for specie in sublat:
-                if specie not in ions: ions.append(specie)
-        #cations =[Back_Modify(ion) for ion in ions if (ion[-1]=='+' or (ion[-1]!='+' and ion[-1]!='-'))]
-        #cations = cations
-        #anions = [Back_Modify(ion) for ion in ions if ion[-1]=='-']
-        #anions = anions 
-        #print('cations',cations,'anions',anions)
+        #ions=[]
+        #for sublat in RO:
+        #    for specie in sublat:
+        #        if specie not in ions: ions.append(specie)
 
         Bits=clusSC.bits;
-        scs = int(round(np.linalg.det(SC)))
+        scs = int(round(np.abs(np.linalg.det(SC))))
         #print('supercell',clusSC.supercell)
         # generate a list of groups of sites to swap between! We have known which sites are partially occupied,
         # so we only need to figure out how pymatgen make a group of supercell sites from a primitive cell site.
@@ -207,6 +202,8 @@ def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst
         # Add approximate ground state to set of MC structures
         # Format as (structure, temperature) - for ground state, temperature is "0"
         mc_structs[RO_string].append((clusSC.structure_from_occu(sa_occu),0))
+        print(RO_string)
+        print("MC Ground state acquired!")
 
         for T in TLst:
             print("Doing MC under T = {}K".format(T))
@@ -389,7 +386,8 @@ def _generate_axis_ref(compounds):
 
     return compSpecieNums, compUniqSpecies, uniqSpecieComps
 
-def _axis_decompose(comSpecieNums, compUniqSpecies,uniqSpecieComps, occu, sc_size):
+def _axis_decompose(compSpecieNums, compUniqSpecies,uniqSpecieComps, occu, sc_size):
+    #print("Axis decompose")
     occuComposition=collections.Counter()
     #These two counters are used to prevent unreasonably generated occupations that cannot be matched with any compound.
     specieStat_from_Occu=collections.Counter()
@@ -398,7 +396,6 @@ def _axis_decompose(comSpecieNums, compUniqSpecies,uniqSpecieComps, occu, sc_siz
     for s,site in enumerate(occu):
         #print(occu)
         for specie in occu[s]:
-            specieStat_from_Occu[specie]+=occu[s][specie]
             if specie in uniqSpecieComps:
                 corrCompound = uniqSpecieComps[specie]
                 occuComposition[corrCompound]+=occu[s][specie]/compSpecieNums[corrCompound][specie]
@@ -406,16 +403,23 @@ def _axis_decompose(comSpecieNums, compUniqSpecies,uniqSpecieComps, occu, sc_siz
     for compound in occuComposition:
         for specie in compSpecieNums[compound]:
             specieStat_from_Compounds[specie]+=compSpecieNums[compound][specie]*occuComposition[compound]
+    for site in occu:
+        for specie in site:
+            specieStat_from_Occu[specie]+=site[specie]
+    
+    #print(specieStat_from_Occu,specieStat_from_Compounds)
     specieNumMatch = True
     for specie in specieStat_from_Occu:
         if abs(specieStat_from_Occu[specie]-specieStat_from_Compounds[specie])>0.01:
             specieNumMatch = False
             break
+    #print(specieNumMatch)
     if not specieNumMatch:
         print('Axis decomposition failed due to mismatch of number of species. Please check your axis compound selection carefully.')
         return
 
-    tot_mol = sum(occuComposition.keys())
+    tot_mol = sum(occuComposition.values())
+
     axis = {compound:occuComposition[compound]/tot_mol for compound in occuComposition}
     return axis
 
@@ -461,15 +465,16 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
             if specieMod not in specieChgDict: specieChgDict[specieMod]=GetIonChg(specieMod)
             siteOccuMod[specieMod]=float(siteOccu[specie])
         occuDicts.append(siteOccuMod)
-    #print(occuDicts)
+    #print("Occupation Enum:",occuDicts)
     
     print('#### Occupation enumeration ####')
     SCLst = []
-    SC_sizes = [int(abs(np.linalg.det(SC))) for SC in SCenum] 
+    SC_sizes = [int(round(abs(np.linalg.det(SC)))) for SC in SCenum] 
 
     # Enumeration by site, not by compounds' chemical formulas
     # We will need to provide a site-by-site replacement method and abandon pymatgen replace_species
     for sc_id,sc in enumerate(SCenum):
+        #print(sc,SC_sizes[sc_id])
         poss_Occu_Sites = []
         for s,site in enumerate(prim):
             poss_Sp_Nums = {}
@@ -481,19 +486,22 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
             -0.01<1.0))]
             #print(allOccu_for_Site)
             poss_Occu_Sites.append(allOccu_for_Site)
-        
+
+        #print(poss_Occu_Sites)
         allOccu_for_Sites = [list(site_combo) for site_combo in itertools.product(*poss_Occu_Sites) \
                              if Is_Neutral_Occu(site_combo,specieChgDict) ]
 
-        #print(allOccu_for_Sites)
+        #print('All occus:', allOccu_for_Sites)
         #Calculate compositions and fractional occupation for each site.
         if comp_axis:
             print('Axis decomposition selected, reference compounds:',comp_axis)
             compSpecieNums, compUniqSpecies, uniqSpecieComps = _generate_axis_ref(comp_axis)
+            #print('compSpecieNums',compSpecieNums,'compUniqSpecies',compUniqSpecies,'uniqSpecieComps',uniqSpecieComps)
             all_axis = []
 
         allFracOccu_for_Sites = []
         occus_WorthToExpand = []
+
         for occu in allOccu_for_Sites:
             #Check whether the generated composition is a fully occupied and pure compound, and avoid to do CE on that.
             #Also generate replacement table
@@ -501,6 +509,8 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
             fracOccu = []
             for site_occu in occu:
                 fracOccu.append({specie:site_occu[specie]/SC_sizes[sc_id] for specie in site_occu})
+            #print('fracOccu',fracOccu)
+
             for site_fracoccu in fracOccu:
                 site_WorthToExpand = True
                 for specie in site_fracoccu:
@@ -508,23 +518,28 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
                         site_WorthToExpand=False
                         break
                 sites_WorthToExpand.append(site_WorthToExpand)
-                
+            #print(sites_WorthToExpand)
+    
             worthToExpand = reduce(lambda x,y:x or y,sites_WorthToExpand)
                     
-            #print('fracOccu',fracOccu,'Composition',occuComposition)
+            #print('worthToExpand',worthToExpand)
             if worthToExpand:
                 allFracOccu_for_Sites.append(fracOccu)
+                #print("allFracOccu_for_sites",allFracOccu_for_Sites)
                 if comp_axis:
-                    all_axis.append(_axis_decompose(comSpecieNums, compUniqSpecies,uniqSpecieComps, \
+                    #print("Do axis_decompose")
+                    #print(_axis_decompose(compSpecieNums,compUniqSpecies,uniqSpecieComps,occu,SC_sizes[sc_id]))
+                    all_axis.append(_axis_decompose(compSpecieNums, compUniqSpecies, uniqSpecieComps,\
                                            occu, SC_sizes[sc_id]))
+                    #print('All axis:',all_axis)
                 occus_WorthToExpand.append(sites_WorthToExpand)
                 #print(occuComposition,'expanded')
 
-        SCLst.extend(zip([SC]*len(allCompositions),allFracOccu_for_Sites,occus_WorthToExpand))
+        SCLst.extend(zip([sc]*len(allFracOccu_for_Sites),allFracOccu_for_Sites,occus_WorthToExpand))
 
-        print('Generated %d compositions for supercell '%len(allCompositions),SC,'.')
+        print('Generated %d compositions for supercell '%len(allFracOccu_for_Sites),sc,'.')
 
-    #print(SCLst)
+    #print('SCLst',SCLst)
     if comp_axis:
         return SCLst,all_axis
     else:
