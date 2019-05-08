@@ -93,7 +93,7 @@ if __name__ == "__main__":
         if os.path.isfile(args.gensetting):
             print("Using exisiting generator setup in {}".format(args.gensetting))
             with open(args.gensetting) as fin:
-                generator=StructureGenenrator.from_dict(json.load(fin))
+                generator=StructureGenerator.from_dict(json.load(fin))
         else:
             print("No existing generator setup detected. Constructing a new one.")
             prim = CifParser(args.prim).get_structures()[0]
@@ -101,21 +101,14 @@ if __name__ == "__main__":
             enforceoccu = json.loads(args.enforceoccu) if args.compaxis else None
             transmat = json.loads(args.transmat) if args.transmat else None
 
-            if os.path.isfile(args.cefile):
-                print("Generator using existing CE.")
-                cefile = args.cefile
-            else:
-                print("No existing CE, using ewald MC.")
-                cefile = None
+            generator = StructureGenerator(prim, args.vasprun, enforceoccu, args.samplestep, args.scs,args.numsc,\
+                            compaxis,transmat,args.cefile,args.vaspsetting)
 
-                generator = StructureGenerator(prim, args.vasprun, enforceoccu, args.samplestep, args.scs,args.numsc,\
-                            compaxis,transmat,cefile,args.vaspsetting)
-
-            if generator.generate_structures():
-                generator.write_structures()
-                generator.write_settings()
-            else:
-                print("Generator aborted. Check the reason carefully.")
+        generator.generate_structures()
+        generator.write_structures()
+        generator.write_settings()
+            #else:
+            #    print("Generator aborted. Check the reason carefully.")
  
     elif args.fit:
         #Fitting a CE model

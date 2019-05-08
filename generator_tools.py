@@ -105,7 +105,7 @@ def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst
         print("Not checking versus previous calculations")
         calculated_structures = None
  
-    if ce_file:
+    if ce_file and os.path.isfile(ce_file):
         # Load cluster expansion
         with open(ce_file,'r') as Fid: cedata = json.load(Fid);
         CE=ClusterExpansion.from_dict(cedata['cluster_expansion']); 
@@ -176,9 +176,10 @@ def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst
         # You may want to change the number of MC flips for each temperature
         #print(type(clusSC))
         init_occu = clusSC.occu_from_structure(randStr)
+        print("Starting occupation:", randStr)
         sa_occu = simulated_anneal(ecis=ecis, cluster_supercell=clusSC, occu=init_occu, ind_groups=indGrps,
                                    n_loops=20000, init_T=5100, final_T=100, n_steps=20)
-
+        print("MC ground state acquired, analyzing composition.")
         # Integrate Wenxuan's solver here, and abandon MC annealing. (In the future.)#
         RO_int = [{specie:int(round(site[specie]*scs)) for specie in site} for site in RO] 
         #convert frac occupation back to integers.
@@ -191,19 +192,23 @@ def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst
 
         #Reduce occupation numbers by GCD.
         RO_string = json.dumps(RO_reduced_int)
+        print("Reduced occupation:", RO_string)
         if RO_string not in mc_structs:
             mc_structs[RO_string]=[]
         
+        #REFERED AXIS DECOMPOSITION IS WRONG. FIX THIS!
+
         if all_axis:
             axis_string = json.dumps(all_axis[sc_ro_pair_id])
             if RO_string not in ro_axis_strings:
                 ro_axis_strings[RO_string] = axis_string
+            print("Axis composition: ",axis_string)
 
         # Add approximate ground state to set of MC structures
         # Format as (structure, temperature) - for ground state, temperature is "0"
+        print("GS structure:",clusSC.structure_from_occu(sa_occu))
         mc_structs[RO_string].append((clusSC.structure_from_occu(sa_occu),0))
-        print(RO_string)
-        print("MC Ground state acquired!")
+        print("MC GS added.")
 
         for T in TLst:
             print("Doing MC under T = {}K".format(T))
@@ -237,6 +242,7 @@ def _get_mc_structs(ce_file,SCLst,outdir='vasp_run',Prim=None,all_axis=None,TLst
     for RO_string,structs in mc_structs.items():
         if RO_string not in unique_structs:
             unique_structs[RO_string] = []
+
         for struct,T in structs:
             unique = True
             if RO_string in calculated_structures:
@@ -546,7 +552,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
         return SCLst,None
 
 class StructureGenerator(MSONable):
-    def __init__(self,prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = None,vasp_settings='vasp_settings.mson'):
+    def __init__(self,prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson'):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
               rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
@@ -580,7 +586,7 @@ class StructureGenerator(MSONable):
         self.sc_selec_num=sc_selec_num
         self.comp_axis = comp_axis
         self.transmat = transmat
-        print("Using transformation matrix {}".format(transmat))
+        #print("Using transformation matrix {}".format(transmat))
         self.ce_file = ce_file
         self.outdir =  outdir
         if os.path.isfile(vasp_settings):
@@ -626,8 +632,8 @@ class StructureGenerator(MSONable):
 # I/O interface for saving only, from_dict method not required
 ####
     @classmethod
-    def from_dict(self,d):
-        prim = d['prim'].from_dict()
+    def from_dict(cls,d):
+        prim = Structure.from_dict(d['prim'])
         generator = cls(prim)
         if 'enforced_occu' in d:
             generator.enforced_occu = d['enforced_occu']
