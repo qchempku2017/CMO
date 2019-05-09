@@ -114,9 +114,9 @@ if __name__ == "__main__":
         #Fitting a CE model
         maxdeformation=json.loads(args.maxdeformation)
 
-        _load_data(args.prim,args.calcdata,args.vasprun,maxdeformation)
+        load_data(args.prim,args.calcdata,args.vasprun,maxdeformation)
         ceradius = json.loads(args.ceradius) if args.ceradius else None
-        _fit_ce(args.calcdata,args.cefile,ceradius)
+        fit_ce(args.calcdata,args.cefile,ceradius)
 
     elif args.solveGS:
         #Solving and updating GS structures.
@@ -127,12 +127,12 @@ if __name__ == "__main__":
             print("No GS solver setting file detected. Using default values.")
             gs_setting = {}
 
-        _solvegs_for_hull(args.cefile,args.calcdata,args.gensetting,args.gsfile,gs_setting)
+        solvegs_for_hull(args.cefile,args.calcdata,args.gensetting,args.gsfile,gs_setting)
         print("Writing new GS to VASP calculations.")
-        _writegss_to_vasprun(args.gsfile,args.vasprun,args.vaspsetting)
+        writegss_to_vasprun(args.gsfile,args.vasprun,args.vaspsetting)
 
     elif args.run:
-        _run_vasp(args.vasprun)
+        run_vasp(args.vasprun)
 
     else:
         print("No job selected. You have to tell me what to do!")

@@ -29,7 +29,7 @@ from pymatgen.analysis.elasticity.strain import Deformation
 from OxData import OXRange #This should be a database like file
 
 
-def _fit_ce(calc_data_file='calcdata.mson', ce_file='ce.mson', ce_radius=None):
+def fit_ce(calc_data_file='calcdata.mson', ce_file='ce.mson', ce_radius=None):
     """
         Inputs:
             1, data_file: name of the mson file that stores the primitive cell for the calculation,
@@ -142,7 +142,7 @@ def _assign_ox_states(struct,magmoms):
     struct.add_oxidation_state_by_site(OxLst);
     return Str;
 
-def _load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vasp_run',\
+def load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vasp_run',\
                max_deformation={'ltol':0.2,'stol':0.1,'angle_tol':5}):
     """
     Args:

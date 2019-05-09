@@ -640,7 +640,7 @@ class GScanonical(MSONable):
 # Canonical to Semi-grand
 ####
 
-def _solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson',\
+def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson',\
                       gs_settings={}):
     """
     Here we generate all the canonical ground states for the hull in calc_data_file, and store them in gs_file.
@@ -697,7 +697,7 @@ def _solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_setti
 
         return _gs_converged
 
-def _writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_settings.mson'):
+def writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_settings.mson'):
     sm = StructureMatcher(ltol=0.3, stol=0.3, angle_tol=5, comparator=ElementComparator())
     
     calculated_structures = {}

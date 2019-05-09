@@ -11,7 +11,7 @@ __version__ = 'Dev'
 import os
 import sys
 
-def _run_vasp(RunDir='vasp_run'):
+def run_vasp(RunDir='vasp_run'):
     """
     Run vasp for all structures under RunDir.
     """

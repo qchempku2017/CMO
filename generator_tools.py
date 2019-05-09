@@ -92,6 +92,7 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
     '''
     print('#### MC Initialization ####')
     calculated_structures = {}
+    calculated_max_ids = {}
 
     _was_generated = lambda x: 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
     if os.path.isdir(outdir):
@@ -105,9 +106,11 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
                 if RO_old_string not in calculated_structures:
                     calculated_structures[RO_old_string]=[]
                 calculated_structures[RO_old_string].append(Poscar.from_file(os.join(root,'POSCAR').structure))
+                struct_id = int(root.split(os.sep[-1]))
+                if RO_old_string not in calculated_max_ids:
+                    calculated_max_ids[RO_old_string]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
     else: 
         print("Not checking versus previous calculations")
-        calculated_structures = None
  
     if ce_file and os.path.isfile(ce_file):
         # Load cluster expansion
@@ -288,7 +291,11 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
                 with open(axis_file_path,'w') as axisfile:
                     axisfile.write(ro_axis_strings[RO_string])
         for i, (struct,T) in enumerate(structs):
-            structDir = os.path.join(compPathDir,str(i))
+            if RO_string in calculated_max_ids:
+                structDir = os.path.join(compPathDir,str(i+calculated_max_ids[RO_string]))
+            else:
+                structDir = os.path.join(compPathDir,str(i))
+
             if not os.path.isdir(structDir): os.mkdir(structDir)
             Poscar(struct.get_sorted_structure()).write_file(os.path.join(structDir,'POSCAR'))
         RO_id += 1
@@ -312,8 +319,8 @@ def _write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_va
 
     if additional_vasp_settings:
         for key in additional_vasp_settings:
-            VASPSettings[key]=additional_vasp_settings
-            print('Changed {} setting.'.format(key))
+            VASPSettings[key]=additional_vasp_settings[key]
+            print('Changed {} setting to {}.'.format(key,additional_vasp_settings[key]))
 
     if not os.path.isdir(VASPDir):os.mkdir(VASPDir);
 
@@ -322,7 +329,7 @@ def _write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_va
          deformation = Deformation(strain)
          Str = Deformation.apply_to_structure(Str)
 
-    Str=Structure(StrainedLatt,Species,FracCoords,to_unit_cell=False,coords_are_cartesian=False);
+    #Str=Structure(StrainedLatt,Species,FracCoords,to_unit_cell=False,coords_are_cartesian=False);
     VIO=MITRelaxSet(Str,potcar_functional = functional); VIO.user_incar_settings=VASPSettings;
     VIO.incar.write_file(os.path.join(VASPDir,'INCAR'));
     VIO.poscar.write_file(os.path.join(VASPDir,'POSCAR'));
@@ -342,11 +349,10 @@ def _gen_vasp_inputs(SearchDir,functional='PBE', num_kpoints=25,add_vasp_setting
     """
     POSDirs=[];
     for Root,Dirs,Files in os.walk(SearchDir):
-        for File in Files:
-            if File == 'POSCAR' and 'fm.0' not in Root and 'INCAR' not in Root: POSDirs.append([Root,File]);
-    for [Root,File] in POSDirs:
-        print("Writing VASP inputs for {}/{}".format(Root,File));
-        Str=Poscar.from_file(os.path.join(Root,File)).structure
+        if 'POSCAR' in Files and 'fm.0' not in Dirs and 'INCAR' not in Files: POSDirs.append(Root);
+    for Root in POSDirs:
+        print("Writing VASP inputs for {}".format(Root));
+        Str=Poscar.from_file(os.path.join(Root,'POSCAR')).structure
         VASPDir= os.path.join(Root,'fm.0'); 
         _write_vasp_inputs(Str,VASPDir,functional,num_kpoints,add_vasp_settings,strain);
 
