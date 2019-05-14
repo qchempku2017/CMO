@@ -49,144 +49,6 @@ Notes:
 #####
 # Tool functions
 #####
-def _map_symops(exp_str,symops):
-    """
-        Generate a mapping to indices of symmetry manipulations.
-    """
-    symops_mapping = []
-    exp_sites = [site.frac_coords for site in exp_str]
-    for symop in symops:
-        new_sites = [site for site in symop.operate_multi(exp_sites)]
-        #print("New:",new_sites)
-        #print("Old:",exp_sites)
-        symops_mapping.append(coord_list_mapping_pbc(new_sites,exp_sites,atol=SITE_TOL))
-    return symops_mapping
-
-def _modify_symops(symops_old,symops_sup,supmat):
-    """
-        Here we combine all rotations and spires from symops_old with all translations from symops_sup to give symops_new.
-    """
-    symops_prim = []
-    for symop in symops_old:
-       #R'=S^-1*R*S, t'=S^-1*t
-       rot = (supmat.T).I * np.matrix(symop.rotation_matrix)* (supmat.T)
-       t = (supmat.T).I* np.matrix(symop.translation_vector).T
-       rot = rot.tolist()
-       t = np.squeeze(t.T.tolist())
-       symop_prim = SymmOp.from_rotation_and_translation(rot,t.tolist())
-       symops_prim.append(symop_prim)
-    symops_trans = [symop for symop in symops_sup if np.array_equal(symop.rotation_matrix,np.identity(3))]
-    symops_new = []
-    for symop_prim in symops_prim:
-        for symop_trans in symops_trans:
-            symop_new = symop_prim*symop_trans
-            symops_new.append(symop_new)
-    print("Number of symmetry operations in the supercell:",len(symops_new))
-    return symops_new
-
-def _make_up_twobodies(ce_old,eci_old,clus_sup):
-    """
-        In this part we will find all pair clusters with in a cluster supercell, and make up those not
-        covered in previous ce.clusters[2]. Returned results formated in dictionaries.
-    """
-    
-    symops_sup = SpacegroupAnalyzer(clus_sup.supercell).get_symmetry_operations()
-    #The command above does not give our desired symmetry correctly, and a lot of degeneracies will be broken!
-    #I will try to directly add all the displacement vectors to the old symops!
-    symops_old = ce_old.symops
-    symops_new = _modify_symops(symops_old,symops_sup,np.matrix(clus_sup.supercell_matrix))
-    exp_sites = [site for site in clus_sup.supercell\
-                if site.species_and_occu.num_atoms < 0.99 or len(site.species_and_occu) > 1]
-    exp_str = Structure.from_sites(exp_sites)
-    #print("exp_str",exp_str)
-    bits = get_bits(exp_str)
-    nbits = np.array([len(b) - 1 for b in bits])
-
-    #ce_test = ClusterExpansion.from_radii(exp_str,{2:7.0})
-    #print("test cluster expansion",ce_test.clusters[2],len(ce_test.clusters[2]))
-    #print("initial cluster expansion",ce_old.clusters[2],"num of pair:",len(ce_old.clusters[2]))
-
-    # Reinitiate. Don't need to modify to new symmetry
-    clusters_new = {}
-    for size in ce_old.clusters:
-        clusters_new[size]=[]
-        for sc in ce_old.clusters[size]:
-            new_sc = SymmetrizedCluster(sc.base_cluster,sc.bits,ce_old.symops)
-            clusters_new[size].append(new_sc) 
-    #print(clusters_new[2])
-
-    #eci_old converted into a dictionary that has the same shape as ce.clusters
-    eci_new = {size:[eci_old[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))]\
-               for sc in ce_old.clusters[size]] for size in ce_old.clusters}
-    
-    non_relavant_pairs = []
-    #print("Establishing all non relavant pairs.")
-    pair_record = []
-    print("Mapping symmetry operations.")
-    symops_mapping = _map_symops(exp_str,symops_new)
-    #print("Mapped %d symmetry operations"%len(symops_mapping),symops_mapping)
-    for i in range(len(exp_str)):
-        pair_record.append([])
-        for j in range(i+1,len(exp_str)):
-            pair_record[-1].append(j)
-    
-    print("Finding all geometrically non-equivalent pairs.")
-    accepted_pairs = []
-    for i,i_j in enumerate(pair_record):
-        while i_j:
-            j=i_j[0]
-            for symop in symops_mapping:
-                if not(i==symop[i] and j==symop[j]) and not(i==symop[j] and j==symop[i]):
-                #Only remove other pairs that are identical.
-                    if symop[i] in pair_record[symop[j]]:
-                        pair_record[symop[j]].remove(symop[i])
-                    if symop[j] in pair_record[symop[i]]:
-                        pair_record[symop[i]].remove(symop[j])
-            accepted_pairs.append((i,j))
-            print("Accepted pair:",(i,j))
-            # print("Pair record:", pair_record)
-            del(i_j[0])
-
-    max_pair_old = max([pair.base_cluster.max_radius for pair in clusters_new[2]])
-    for pair in accepted_pairs:
-        #print("checking pair",pair)
-        #print([exp_str[site] for site in pair])
-        #Need to transform clusters in supercells back before adding them into cluster expansion!
-        #We actually don't need too forcibly add internal translations to supercells, since they are included in
-        #ClusterSupercell.coord_list_mapping_pbc!
-        pair_sup_coord = [exp_str[site].frac_coords for site in pair]
-        pair_prim_coord = np.dot(pair_sup_coord,clus_sup.supercell_matrix)
-
-        pair_c = Cluster([site for site in pair_prim_coord],exp_str.lattice)
-        pair_sc = SymmetrizedCluster(pair_c,[np.arange(nbits[i]) for i in pair],ce_old.symops)
-
-        if pair_c.max_radius > max_pair_old:
-            """
-                 Just add pair without double check. All are symetrically inequivalent since we have done dedup before.
-            """
-            print("Adding sym-cluster:",pair,"Radius:",pair_c.max_radius)
-            clusters_new[2].append(pair_sc)
-            #print("pair_c:",pair_c)
-            #print('pair equiv:',pair_sc._equiv,'number:',len(pair_sc._equiv))
-            #print('pair multiplicity:',pair_sc.multiplicity)
-            #print('Num of self symmetry:',len(pair_sc.cluster_symops))
-            eci_new[2].append([0]*len(pair_sc.bit_combos))
-
-    if ce_old.use_inv_r:
-        eci_new['ew']=eci_old[-len(clus_sup.partial_ems):]
-    else:
-        eci_new['ew']=eci_old[-1]
-    print('Added %d pair clusters.'%(len(clusters_new[2])-len(ce_old.clusters[2])))
-
-    ce_new = ClusterExpansion(structure=ce_old.structure, expansion_structure=ce_old.expansion_structure,\
-                              symops=ce_old.symops, clusters= clusters_new,\
-                              ltol=ce_old.ltol, stol=ce_old.stol, angle_tol=ce_old.angle_tol,\
-                              supercell_size=ce_old.supercell_size,\
-                              use_ewald=False, use_inv_r=False, eta=None)
-    #Here we disable ewald in ce_new in order to make our life easier in later energy summations.
-    #print('eci_new',eci_new,len(eci_new))
-    #print('ce_new',ce_new.clusters)
-    return ce_new,eci_new
 
 #####
 #Class functions
@@ -197,15 +59,18 @@ class GScanonical(MSONable):
     Defines a ground state problem for a generalized ising system. Uses 0/1(cluster counting) formalism.
     """
 
-    def __init__(self, ce, eci, composition, maxsupercell=16, num_of_sizes=4, selec=20, ubsolver='ccls_akmaxsat'):
+    def __init__(self, ce, eci, composition, transmat=[[1,0,0],[0,1,0],[0,0,1]],maxsupercell=16, \
+                 max_block_range = 10,num_of_sizes=4, selec=20, solver='ccls_akmaxsat'):
         """
         Args:
             ce: a cluster expansion object that you wish to solve the GS of.
             eci: eci's of clusters in ce
+            composition: composition of the canonical ensemble. Format given in composition_by_site file.
             maxsupercell: maximum supercell sizes
+            max_block_range: maximum block extension range.(prim/dimension)
             num_of_sizes: number of supercell sizes to be enumerated.
             selec: number of supercell matrix to selec.
-            ubsolver: the MAXSAT solver used to solve the upper bound problem. Default: ccls_akmaxsat.
+            solver: the MAXSAT solver used to solve the upper bound problem. Default: ccls_akmaxsat.
             composition: a list of dictionaries that represents species occupation ratio on each site. For example:
                          [{'Li+':8,'Co3+':6,'Co4+':2},{'O2-':13,'F-':3}]
                          Compositions are read from the CE file constructed by the CE generator.
@@ -220,6 +85,7 @@ class GScanonical(MSONable):
         self._bit_inds = None
         self._ces_new = None
         self.maxsupercell = maxsupercell
+        self.max_block_range = max_block_range
         self.num_of_sizes = num_of_sizes
         self.selec = selec
         
@@ -230,7 +96,7 @@ class GScanonical(MSONable):
         # Find the enumeration step for composition, and this will be the minimum enumerated supercell size.
         self.composition=[{sp:site_occu[sp]//self._comp_step for sp in site_occu} for site_occu in composition]
 
-        self.ubsolver = ubsolver
+        self.solver = solver
         self.e_lower = None
         self.str_upper = None
         self.e_upper = None
@@ -238,23 +104,25 @@ class GScanonical(MSONable):
         self.use_ewald = self.ce.use_ewald
         self.use_inv_r = self.ce.use_inv_r
         self._enumlist = None
-        self.transmat = [[1,0,0],[0,1,0],[0,0,1]]
+        self.transmat = transmat
+        if self.transmat != [[1,0,0],[0,1,0],[0,0,1]]:
+            print("Using transformation matrix:",self.transmat,"in enumeration.")
     
 ####
 # Callable interface
-####
-    def set_transmat(self,transmat):
-        self.transmat=transmat
-        print("Using transformation matrix:",transmat,"after enumeration.")
-       
+####       
     def solve(self):
         if not(self.solved):
-            self.solved=self._iterate_supercells()
-            if not(self.solved):
-                print("Failed to find the GS after enumeration. You may want to increase enumeration scale.")
-                return False              
-        print("Found solution to GS problem! GS energy: %f."%self.e_lower)
-        return True
+            # Iterate upper-bound, then lower-bound. Compare tightest bounds.
+            e_upper,str_upper = self._iterate_ub()
+            e_lower = self._iterate_lb()
+            # e_upper and e_lower should be normalized to energy/prim to be compared!
+            if np.abs(e_upper-e_lower)<0.001:
+                self.e_upper, self.str_upper = (e_upper,str_upper)
+                self.e_lower = e_lower
+                self.solved = True
+                print("GS found. Energy: {} eV/prim, structure: {}".format(self.e_upper,self.e_lower))
+            else
     
     @property
     def enumlist(self):
@@ -323,17 +191,7 @@ class GScanonical(MSONable):
                 if self.use_ewald:
                     print("Making up all pair interactions for supercell:",mat)
 
-                    #Reset symops of all Symmetrized clusters, reset ce.structure, make up two body clusters
-                    ce_new, eci_new = _make_up_twobodies(self.ce,self.eci,clus_sup)
-                    #print('ce_new',ce_new.clusters)
-                    #print('eci_new',eci_new)
-
-                    clusters_new = ce_new.clusters
-
-                    #ce_new.structure == ce_old.structure!
-                    clus_sup_new = ce_new.supercell_from_matrix(mat)
-
-                    ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup_new.supercell])
+                    ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup.supercell])
                     H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
 
                     #Ewald energy E_ew = (q+r)*H*(q+r)'. I used a stupid way to get H but quite effective.
@@ -531,8 +389,8 @@ class GScanonical(MSONable):
         print('Callsing MAXSAT solver. Using random seed %d.'%rand_seed)
         os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
         os.chdir(MAXSAT_PATH)
-        MAXSAT_CMD = './'+self.ubsolver+' ./maxsat.wcnf'
-        if self.ubsolver in INCOMPLETE_MAXSAT:
+        MAXSAT_CMD = './'+self.solver+' ./maxsat.wcnf'
+        if self.solver in INCOMPLETE_MAXSAT:
             MAXSAT_CMD += ' %d %d'%(rand_seed,MAXSAT_CUTOFF)
         MAXSAT_CMD += '> maxsat.out'
         print(MAXSAT_CMD)
@@ -591,12 +449,14 @@ class GScanonical(MSONable):
         #essential terms for initialization
         if 'maxsupercell' in d:
             gs_socket.maxsupercell=d['maxsupercell']
+        if 'max_block_range' in d:
+            gs_socket.max_block_range=d['max_block_range']
         if 'num_of_sizes' in d:
             gs_socket.num_of_sizes=d['num_of_sizes']
         if 'selec' in d:
             gs_socket.selec = d['selec']
-        if 'ubsolver' in d:
-            gs_socket.ubsolver = d['ubsolver']
+        if 'solver' in d:
+            gs_socket.solver = d['solver']
         if 'e_lower' in d:
             gs_socket.e_lower=d['e_lower']        
         if 'lastsupermat' in d:
@@ -631,9 +491,10 @@ class GScanonical(MSONable):
                 'ecis':self.eci,\
                 'composition':self.composition,\
                 'maxsupercell':self.maxsupercell,\
-                'num_of_sizes':self.num_if_sizes,\
+                'max_block_range':self.max_block_range,\
+                'num_of_sizes':self.num_of_sizes,\
                 'selec':self.selec,\
-                'ubsolver':self.ubsolver,\
+                'solver':self.solver,\
                 'e_lower':self.e_lower,\
                 'e_upper':self.e_upper,\
                 'str_upper':self.str_upper.as_dict(),\
@@ -646,12 +507,23 @@ class GScanonical(MSONable):
                 '@class':self.__class__.__name__\
                }
 
+    def write_settings(self,gen_settings='generator_settings.mson',use_same_setting=True):
+        if use_same_setting and not os.path.isfile(gen_settings):
+            print("Using same setting across the hull, but setting file is not written. Writing into {}".format(gen_settings))
+            settings = {'maxsupercell':self.maxsupercell,\
+                        'max_block_range':self.max_block_range,\
+                        'num_of_sizes':self.num_of_sizes,\
+                        'selec':self.selec,
+                        'solver':self.solver}
+            with open(gen_settings) as fout:
+                json.dump(settings,fout)
+
+
 ####
 # Canonical to Semi-grand
 ####
 
-def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson',\
-                      gs_settings={}):
+def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson'):
     """
     Here we generate all the canonical ground states for the hull in calc_data_file, and store them in gs_file.
     Output:
@@ -661,51 +533,60 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settin
         print("No valid calulations detected, can't solve GS!")
         return
 
+    if os.path.isfile(gen_settings):
+        print("Using exsiting generator settings from {}.".format(gen_settings))
+        with open(gen_settings) as fin:
+            gs_settings = json.load(fin)
     else:
-        with open(calc_data_file) as calc_data:
-            calcdata = json.load(calc_data)
-        with open(ce_file) as ce_data:
-            cedata = json.load(ce_data)
+        gs_settings = {}
 
-        ecis = cedata['ecis']
-        ce = ClusterExpansion.from_dict(cedata['cluster_expansion'])
-        gss = {}
+    with open(calc_data_file) as calc_data:
+        calcdata = json.load(calc_data)
+    with open(ce_file) as ce_data:
+        cedata = json.load(ce_data)
 
-        for compstring in calcdata:
-            composition=json.loads(compstring)
-            gs_socket = GScanonical(ce,ecis,composition)
-            if 'maxsupercell' in gs_settings:
-                gs_socket.maxsupercell=gs_settings['maxsupercell']
-            if 'num_of_sizes' in gs_settings:
-                gs_socket.num_of_sizes=gs_settings['num_of_sizes']
-            if 'selec' in gs_settings:
-                gs_socket.selec=gs_settings['selec']
-            if 'ubsolver' in gs_settings:
-                gs_socket.ubsolver=gs_settings['ubsolver']
+    ecis = cedata['ecis']
+    ce = ClusterExpansion.from_dict(cedata['cluster_expansion'])
+    gss = {}
+
+    for compstring in calcdata:
+        composition=json.loads(compstring)
+        gs_socket = GScanonical(ce,ecis,composition)
+        if 'maxsupercell' in gs_settings:
+            gs_socket.maxsupercell=gs_settings['maxsupercell']
+        if 'max_block_range' in gs_settings:
+            gs_socket.max_block_range=gs_settings['max_block_range']
+        if 'num_of_sizes' in gs_settings:
+            gs_socket.num_of_sizes=gs_settings['num_of_sizes']
+        if 'selec' in gs_settings:
+            gs_socket.selec=gs_settings['selec']
+        if 'solver' in gs_settings:
+            gs_socket.solver=gs_settings['solver']
               
-            gss[compstring]={}
-            if gs_socket.solve():
-                gss[compstring]['gs_structure']=gs_socket.str_upper.as_dict()
-                gss[compstring]['gs_energy']=gs_socket.e_upper
+        gss[compstring]={}
+        gs_socket.solve()
+        if gs_socket.solved:
+            gss[compstring]['gs_structure']=gs_socket.str_upper.as_dict()
+            gss[compstring]['gs_energy']=gs_socket.e_upper
 
-        if os.path.isfile(gs_file):
-            with open(gs_file) as gs_in:
-                gss_old = json.load(gs_in)
-            _gs_converged = True
-            for compstring in gss:
-                if 'gs_energy' not in gss_old[compstring] or 'gs_energy' not in gss[compstring] or \
-                        abs(gss_old[compstring]['gs_energy']-gss[compstring]['gs_energy'])>0.001:
-                            _gs_converged = False
-                            break
-        else:
-            _gs_converged = False
+    if os.path.isfile(gs_file):
+        with open(gs_file) as gs_in:
+            gss_old = json.load(gs_in)
+        _gs_converged = True
+        for compstring in gss:
+            if 'gs_energy' not in gss_old[compstring] or 'gs_energy' not in gss[compstring] or \
+                    abs(gss_old[compstring]['gs_energy']-gss[compstring]['gs_energy'])>0.001:
+                         _gs_converged = False
+                        break
+    else:
+         _gs_converged = False
 
-        with open(gs_file,'w') as gs_out:
-            json.dump(gss,gs_out)
+    with open(gs_file,'w') as gs_out:
+        json.dump(gss,gs_out)
 
-        print("Solved GS structures on {} hull points.").format(len(gss))
+    print("Solved GS structures on {} hull points.").format(len(gss))
 
-        return _gs_converged
+    return _gs_converged
 
 def writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_settings.mson'):
     sm = StructureMatcher(ltol=0.3, stol=0.3, angle_tol=5, comparator=ElementComparator())

@@ -183,7 +183,7 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
         # You may want to change the number of MC flips for each temperature
         #print(type(clusSC))
         init_occu = clusSC.occu_from_structure(randStr)
-        print("Starting occupation:", randStr)
+        # print("Starting occupation:", randStr)
         sa_occu = simulated_anneal(ecis=ecis, cluster_supercell=clusSC, occu=init_occu, ind_groups=indGrps,
                                    n_loops=20000, init_T=5100, final_T=100, n_steps=20)
         print("MC ground state acquired, analyzing composition.")
@@ -216,7 +216,7 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
 
         # Add approximate ground state to set of MC structures
         # Format as (structure, temperature) - for ground state, temperature is "0"
-        print("GS structure:",clusSC.structure_from_occu(sa_occu))
+        # print("GS structure:",clusSC.structure_from_occu(sa_occu))
         mc_structs[RO_string].append((clusSC.structure_from_occu(sa_occu),0))
         print("MC GS added.")
 
