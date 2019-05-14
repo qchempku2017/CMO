@@ -105,7 +105,7 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
                     RO_old_string = json.dumps(RO_old)
                 if RO_old_string not in calculated_structures:
                     calculated_structures[RO_old_string]=[]
-                calculated_structures[RO_old_string].append(Poscar.from_file(os.join(root,'POSCAR').structure))
+                calculated_structures[RO_old_string].append(Poscar.from_file(os.path.join(root,'POSCAR').structure))
                 struct_id = int(root.split(os.sep[-1]))
                 if RO_old_string not in calculated_max_ids:
                     calculated_max_ids[RO_old_string]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
@@ -285,7 +285,7 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
         if not os.path.isfile(occu_file_path):
             with open(occu_file_path,'w') as occufile:
                 occufile.write(RO_string)
-        if all_axis:
+        if compaxis:
             axis_file_path = os.path.join(compPathDir,'axis')
             if not os.path.isfile(axis_file_path):
                 with open(axis_file_path,'w') as axisfile:
@@ -327,10 +327,10 @@ def _write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_va
     # Joggle the lattice to help symmetry broken relaxation. You may turn it off by setting strain=None
     if strain:
          deformation = Deformation(strain)
-         Str = Deformation.apply_to_structure(Str)
+         defStr = deformation.apply_to_structure(Str)
 
     #Str=Structure(StrainedLatt,Species,FracCoords,to_unit_cell=False,coords_are_cartesian=False);
-    VIO=MITRelaxSet(Str,potcar_functional = functional); VIO.user_incar_settings=VASPSettings;
+    VIO=MITRelaxSet(defStr,potcar_functional = functional); VIO.user_incar_settings=VASPSettings;
     VIO.incar.write_file(os.path.join(VASPDir,'INCAR'));
     VIO.poscar.write_file(os.path.join(VASPDir,'POSCAR'));
     Kpoints.automatic(num_kpoints).write_file(os.path.join(VASPDir,'KPOINTS'));
