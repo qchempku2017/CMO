@@ -44,6 +44,8 @@ Notes:
     introduced by ClusterSupercell.generate_mapping)
     Then I estimated the ewald correction to LB by peridic ewald value. Not
     mathematically proven.
+
+    ClusterExpansion class already have all the enerigies normalized before fitting.
 """
 
 #####
@@ -83,7 +85,7 @@ class GScanonical(MSONable):
         self._bclus_corrected = None
         self._ecis_corrected = None
         self._bit_inds = None
-        self._ces_new = None
+
         self.maxsupercell = maxsupercell
         self.max_block_range = max_block_range
         self.num_of_sizes = num_of_sizes
@@ -162,11 +164,11 @@ class GScanonical(MSONable):
             Returns a list of ewald corrected bit_clusters, each element for a matrix in self.enumlist.
         """
 
-        if (not self._bclus_corrected) or (not self._ecis_corrected) or (not self._bit_inds) or (not self._ces_new):
+        if (not self._bclus_corrected) or (not self._ecis_corrected) or (not self._bit_inds):
             self._bclus_corrected = []
             self._ecis_corrected = []
             self._bit_inds = []
-            self._ces_new = []
+
             if self.use_ewald:
                 print("Ewald correction required!")
 
@@ -186,9 +188,23 @@ class GScanonical(MSONable):
                 print('%d variables will be used in MAXSAT.'%(b_id-1))
                 self._bit_inds.append(bit_inds)
                 #print(bit_inds)
+                
+                #Here we generate a mapping from clusters to site combos, which will be turned into clauses.
+                clusters = self.ce.clusters
+                eci = self.eci
+                eci_new = {size:[eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in clusters[size]] \
+                               for size in clusters}
+                for sc,sc_inds in clus_sup.cluster_indices:
+                    for i,all_combo in enumerate(sc.bit_combos):
+                        for combo in all_combo:
+                            b_clusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
+                                                  for sc_ind in sc_inds])
+                            eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
+                                                   for sc_ind in sc_inds])
 
-                #Ewald correction, as well as chemical potential integration.
                 if self.use_ewald:
+                    #Here we do electro-static correction. Reference zero energy state is the one that all sites 
+                    #are occupied by reference compound.
                     print("Making up all pair interactions for supercell:",mat)
 
                     ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup.supercell])
@@ -198,83 +214,72 @@ class GScanonical(MSONable):
                     supbits = get_bits(clus_sup_new.supercell)
                     r = np.array([GetIonChg(bits[-1]) for bits in supbits])
                     chg_bits = [[GetIonChg(bit)-GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
-                    b_clusters = []
-                    eci_return = []
+                    H_r = np.dot(H,r)
 
                     if not self.use_inv_r:
-                        eci_ew = eci_new['ew']
-                        H_r = np.dot(H,r)
-                        #Here we do electro-static correction. Reference zero energy state is the one that all sites are occupied by reference compound. Relative chemical potential of species will also be integrated here.
-                        for sc,sc_inds in clus_sup_new.cluster_indices:
-                            for i,all_combo in enumerate(sc.bit_combos):
-                                #An item in bit_combos store an orbit of equivalent bit combinations, not just one.
-                                #len(sc_inds[item][1])=clustersupercell.size*sc.multiplicity,
-                                #sc.multiplicity=len(sc.equivalent_clusters)
-                                #sc.multiplicity*len(sc.cluster_symops)=len(ce.symops)
-                                #Thus, all bit_combo in bit_combo[item] should be included, not just bit_combo[item][0]!
-                                for combo in all_combo:
-                                    b_clusters.extend([[bit_inds[sc_ind[s]][combo[s]] for s in range(len(sc_ind))]\
-                                                  for sc_ind in sc_inds])
-                                    if len(sc.bits)==1:     
-                                        eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]+\
-                                                      eci_ew*(chg_bits[sc_ind[0]][combo[0]]*H_r[sc_ind[0]]+\
-                                                              chg_bits[sc_ind[0]][combo[0]]**2*H[sc_ind[0]][sc_ind[0]]*2)\
-                                                           for sc_ind in sc_inds]) 
-                                    
-                                    elif len(sc.bits)==2:
-                                        eci_return.extend([eci_new[2][sc.sc_id-clusters_new[2][0].sc_id][i]+\
-                                                      eci_ew*chg_bits[sc_ind[0]][combo[0]]*chg_bits[sc_ind[1]][combo[1]]*\
-                                                      H[sc_ind[0]][sc_ind[1]] for sc_ind in sc_inds])
-                                    else:
-                                        eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i]\
-                                                      for sc_ind in sc_inds])
+                        eci_ew = eci[-1]
 
+                        for i in range(len(bit_inds)):
+                            for j in range(i,len(bit_inds)):
+                                for k in range(len(bit_inds[i])-1):
+                                    for l in range((k if i==j else 0),len(bit_inds[j])-1):
+                                        if bit_inds[i][k]!=bit_inds[j][l]:
+                                            bit_a = bit_inds[i][k]
+                                            bit_b = bit_inds[j][l]
+                                            b_clusters.append([bit_a,bit_b]) 
+                                            eci_return.append(eci_ew* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                        else:
+                                            bit = bit_inds[i][k]
+                                            b_clusters.append([bit])
+                                            eci_return.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
+                        #Deduplication.
+                        b_clusters_uniq = []
+                        eci_return_uniq = []
+                        for b_cluster,eci in zip(b_clusters,eci_return):
+                            for idx,b_cluster_new in enumerate(b_clusters_uniq):
+                                if set(b_cluster_new)==set(b_cluster):
+                                    eci_return_uniq[idx]=eci_return_uniq[idx]+eci
+                                else:
+                                    b_clusters_uniq.append(b_cluster)
+                                    eci_return_uniq.append(eci)
+                                
                     else:
-                        #When using inv_r, an independent ewald sum is generated for each specie, and they each are fitted into an ECI.
-                        print("I'm still thinking about use_inv_r cases. Not available yet!")
-                        raise NotImplementedError
+                        #When using inv_r, an independent ewald sum is generated for each specie-specie pair, and the sums are
+                        #considered components of corr
+                        equiv_species = []
+                        for sc,inds in clus_sup.cluster_indices:
+                            if len(sc.bits)>1:
+                                break
+                            equiv=inds[:,0]
+                            for site_id in equiv:
+                                equiv_species_sublat = []
+                                for sp_id in bit_inds[site_id]:
+                                    equiv_species_sublat.append(bit_inds[site_id][sp_id])
+                                                    
+
+                        eci_ews = eci[:]
+
+                    self._bclus_corrected.append(b_clusters_uniq)
+                    self._ecis_corrected.append(eci_return_uniq)
 
                 else:
-                    ce_new = self.ce
-                    clusters_new = self.ce.clusters
-                    eci_new = {size:[eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in clusters_new[size]] \
-                               for size in clusters_new}
-                    clus_sup_new = self.ce.supercell_from_matrix(mat)
-                    for sc,sc_inds in clus_sup_new.cluster_indices:
-                        for i,all_combo in enumerate(sc.bit_combos):
-                            for combo in all_combo:
-                                b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
-                                                  for sc_ind in sc_inds])
-                                if len(sc.bits)==1:     
-                                    eci_return.extend([eci_new[1][sc.sc_id-clusters_new[1][0].sc_id][i]\
-                                                       for sc_ind in sc_inds])
-                                else:
-                                    eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters_new[len(sc.bits)][0].sc_id][i]\
-                                                   for sc_ind in sc_inds])
-
-                self._bclus_corrected.append(b_clusters)
-                self._ecis_corrected.append(eci_return)
-                self._ces_new.append(ce_new)
+                    self._bclus_corrected.append(b_clusters)
+                    self._ecis_corrected.append(eci_return)
 
         return self._bclus_corrected
 
     @property
     def ecis_corrected(self):
-        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds) or (not self._ces_new):
+        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds):
             bclus_corrected = self.bclus_corrected
         return self._ecis_corrected
 
     @property
     def bit_inds(self):
-        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds) or (not self._ces_new):
+        if (not self._ecis_corrected) or (not self._bclus_corrected) :
             bclus_corrected = self.bclus_corrected
         return self._bit_inds
 
-    @property
-    def ces_new(self):
-        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds) or (not self._ces_new):
-            bclus_corrected = self.bclus_corrected
-        return self._ces_new
 ####
 # Private tools for the class
 #### 
@@ -408,8 +413,6 @@ class GScanonical(MSONable):
                     maxsat_res = [int(num) for num in line.split()[1:]]
         sorted(maxsat_res,key=lambda x:abs(x))
 
-        ce_new = self.ces_new[mat_id]
-        cs = ce_new.supercell_from_matrix(self.enumlist[mat_id])
         cs_bits = get_bits(cs.supercell)
         upper_sites = []
         for s,site in enumerate(site_specie_ids):
@@ -468,11 +471,10 @@ class GScanonical(MSONable):
             gs_socket.str_upper=d['str_upper']
         if 'transmat' in d:
             gs_socket.transmat=d['transmat']
-        if 'bclus_corrected' in d and 'ecis_corrected' in d and 'bit_inds' in d and 'ces_new' in d:
+        if 'bclus_corrected' in d and 'ecis_corrected' in d and 'bit_inds' in d:
             gs_socket._bclus_corrected = d['bclus_corrected']
             gs_socket._ecis_corrected = d['ecis_corrected']
             gs_socket._bit_inds = d['bit_inds']
-            gs_socket._ces_new = d['ces_new']
         if ('e_lower' in d) and ('e_upper' in d) and np.abs(d['e_lower']-d['e_upper'])<=0.001 and ('str_upper' in d):
             gs_socket.solved=True
             print("Loaded instance already has a solved GS. GS energy: %f"%(gs_socket.e_upper))
@@ -502,7 +504,6 @@ class GScanonical(MSONable):
                 'bclus_corrected':self.bclus_corrected,\
                 'ecis_corrected':self.ecis_corrected,\
                 'bit_inds':self.bit_inds,\
-                'ces_new':self.ces_new,\
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
                }
