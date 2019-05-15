@@ -246,18 +246,27 @@ class GScanonical(MSONable):
                     else:
                         #When using inv_r, an independent ewald sum is generated for each specie-specie pair, and the sums are
                         #considered components of corr
-                        equiv_species = []
+                        equiv_sites = []
                         for sc,inds in clus_sup.cluster_indices:
                             if len(sc.bits)>1:
                                 break
-                            equiv=inds[:,0]
-                            for site_id in equiv:
-                                equiv_species_sublat = []
-                                for sp_id in bit_inds[site_id]:
-                                    equiv_species_sublat.append(bit_inds[site_id][sp_id])
-                                                    
+                            equiv_sites.append(inds[:,0])
 
-                        eci_ews = eci[:]
+                        equiv_species = []
+                        num_sp_on_sublats = []
+                        for sublat in equiv_sites:
+                            num_sp_on_sublat=len(bit_inds[sublat[0]])
+                            num_sp_on_sublats.append(num_sp_on_sublat)
+                            for sp_id in range(num_sp_on_sublat):
+                                equiv_species_sublat = []
+                                for site_id in sublat:
+                                    equiv_species_sublat.append(bit_inds[site_id][sp_id])
+                                equiv_species.append(equiv_species_sublat)
+                                                    
+                        #Find corresponding specie pair indices in eci_ew
+                        idx_sp_on_sublats = [list(range(num)) for num in num_sp_on_sublats]
+                        for i,specie in enumerate(equiv_species):
+                            
 
                     self._bclus_corrected.append(b_clusters_uniq)
                     self._ecis_corrected.append(eci_return_uniq)
