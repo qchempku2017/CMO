@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-./CEAutomator.py -r
+./CEAuto.py -r
