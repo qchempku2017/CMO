@@ -18,7 +18,7 @@ def run_vasp(RunDir='vasp_run'):
     absRunDir = os.path.abspath(RunDir)
     parentDir = os.path.dirname(absRunDir)
     POSDirs=[];
-    if not os.path.isfile(os.path.join(parentdir,'sub.sh')):
+    if not os.path.isfile(os.path.join(parentDir,'sub.sh')):
         print("Submission script to computer clusters not provided, please provide one under job directory!")
         return
 
