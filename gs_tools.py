@@ -259,7 +259,7 @@ class GScanonical(MSONable):
                             for specie_id in bit_inds[sublat[0]]:
                                 sublat_sp_list.append(sp_id)
                                 sp_id += 1
-                            sp_list.extend(sublat_sp_list*len(sublat))
+                            sp_list.extend([sublat_sp_list]*len(sublat))
                        
                         for i in range(len(bit_inds)):
                             for j in range(i,len(bit_inds)):
@@ -352,7 +352,6 @@ class GScanonical(MSONable):
         such matrix elements will be added. Finally, will remove the ewald related term(s).
             At the beginning of initialization, the self.enumlist and ewald corrections would already have been done. You gotta save a lot of time.
             mat_id: current supercell matrix id.
-            Warning: still a piece of pseudocode!!!!!
         """
         
         return self.bclus_corrected[mat_id],self.ecis_corrected[mat_id],self.bit_inds[mat_id]
@@ -371,7 +370,7 @@ class GScanonical(MSONable):
             hard_cls.extend([[hard_marker]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(site_specie_ids[site_id],2)])
         #Hard clauses to enforce sum(specie_occu)=1
 
-        sublat_sp_ids = [[]]*len(self.ce.structure)
+        sublat_ps_ids = [[]]*len(self.ce.structure)
         sc_size = int(round(self.enumlist[mat_id]))
         
         site_id = 0
