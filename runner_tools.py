@@ -28,8 +28,8 @@ def run_vasp(RunDir='vasp_run'):
 
     for Root,Dirs,Files in os.walk(RunDir):
         if _is_VASP_Input(Files) and 'fm.0' in Root:
-            if os.path.isfile(os.join(root,'OUTCAR')):
-                with open(os.path.isfile(os.join(root,'OUTCAR'))) as outfile:
+            if os.path.isfile(os.path.join(Root,'OUTCAR')):
+                with open(os.path.isfile(os.path.join(Root,'OUTCAR'))) as outfile:
                     outstring = outfile.read()
                     if 'reached required accuracy' in outstring:
                         continue
