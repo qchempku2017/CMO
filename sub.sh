@@ -1,7 +1,7 @@
 #!/bin/bash
 #$ -cwd
 #$ -j y
-#$ -N aimd_Li3PS4
+#$ -N CMO_CE
 #$ -m es
 #$ -V
 #$ -pe impi 16
