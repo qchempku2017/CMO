@@ -194,6 +194,9 @@ class GScanonical(MSONable):
                 eci = self.eci
                 eci_new = {size:[eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in clusters[size]] \
                                for size in clusters}
+                b_clusters = []
+                eci_return = []
+
                 for sc,sc_inds in clus_sup.cluster_indices:
                     for i,all_combo in enumerate(sc.bit_combos):
                         for combo in all_combo:
@@ -205,7 +208,7 @@ class GScanonical(MSONable):
                 if self.use_ewald:
                     #Here we do electro-static correction. Reference zero energy state is the one that all sites 
                     #are occupied by reference compound.
-                    print("Making up all pair interactions for supercell:",mat)
+                    print("Making up all ewald interactions for supercell:",mat)
 
                     ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup.supercell])
                     H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
@@ -215,6 +218,9 @@ class GScanonical(MSONable):
                     r = np.array([GetIonChg(bits[-1]) for bits in supbits])
                     chg_bits = [[GetIonChg(bit)-GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
                     H_r = np.dot(H,r)
+                    
+                    b_clusters_ew = []
+                    eci_return_ew = []
 
                     if not self.use_inv_r:
                         eci_ew = eci[-1]
@@ -226,54 +232,77 @@ class GScanonical(MSONable):
                                         if bit_inds[i][k]!=bit_inds[j][l]:
                                             bit_a = bit_inds[i][k]
                                             bit_b = bit_inds[j][l]
-                                            b_clusters.append([bit_a,bit_b]) 
-                                            eci_return.append(eci_ew* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                            b_clusters_ew.append([bit_a,bit_b]) 
+                                            eci_return_ew.append(eci_ew* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
                                         else:
                                             bit = bit_inds[i][k]
-                                            b_clusters.append([bit])
-                                            eci_return.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
-                        #Deduplication.
-                        b_clusters_uniq = []
-                        eci_return_uniq = []
-                        for b_cluster,eci in zip(b_clusters,eci_return):
-                            for idx,b_cluster_new in enumerate(b_clusters_uniq):
-                                if set(b_cluster_new)==set(b_cluster):
-                                    eci_return_uniq[idx]=eci_return_uniq[idx]+eci
-                                else:
-                                    b_clusters_uniq.append(b_cluster)
-                                    eci_return_uniq.append(eci)
-                                
+                                            b_clusters_ew.append([bit])
+                                            eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
+
                     else:
                         #When using inv_r, an independent ewald sum is generated for each specie-specie pair, and the sums are
                         #considered components of corr
+                        N_sp = sum([len(site.species_and_occu) for site in clus_sup.supercell])
+                        N_eweci = N_sp+N_sp*(N_sp-1)//2
+                        eci_ew = eci[-N_eweci:]
+                        
                         equiv_sites = []
                         for sc,inds in clus_sup.cluster_indices:
                             if len(sc.bits)>1:
                                 break
                             equiv_sites.append(inds[:,0])
 
-                        equiv_species = []
-                        num_sp_on_sublats = []
+                        sp_list = []
+                        sp_id = 0
                         for sublat in equiv_sites:
-                            num_sp_on_sublat=len(bit_inds[sublat[0]])
-                            num_sp_on_sublats.append(num_sp_on_sublat)
-                            for sp_id in range(num_sp_on_sublat):
-                                equiv_species_sublat = []
-                                for site_id in sublat:
-                                    equiv_species_sublat.append(bit_inds[site_id][sp_id])
-                                equiv_species.append(equiv_species_sublat)
-                                                    
-                        #Find corresponding specie pair indices in eci_ew
-                        idx_sp_on_sublats = [list(range(num)) for num in num_sp_on_sublats]
-                        for i,specie in enumerate(equiv_species):
-                            
-
-                    self._bclus_corrected.append(b_clusters_uniq)
-                    self._ecis_corrected.append(eci_return_uniq)
-
-                else:
-                    self._bclus_corrected.append(b_clusters)
-                    self._ecis_corrected.append(eci_return)
+                            sublat_sp_list = []
+                            for specie_id in bit_inds[sublat[0]]:
+                                sublat_sp_list.append(sp_id)
+                                sp_id += 1
+                            sp_list.extend(sublat_sp_list*len(sublat))
+                       
+                        for i in range(len(bit_inds)):
+                            for j in range(i,len(bit_inds)):
+                                for k in range(len(bit_inds[i])-1):
+                                    for l in range((k if i==j else 0),len(bit_inds[j])-1):
+                                        if bit_inds[i][k]!=bit_inds[j][l]:
+                                            bit_a = bit_inds[i][k]
+                                            bit_b = bit_inds[j][l]
+                                            b_clusters_ew.append([bit_a,bit_b])
+                                            id_a = sp_list[i][k]
+                                            id_b = sp_list[j][l]
+                                            id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b - id_a -1 # Serial id of a,b pair in eci_ew list.
+                                            eci_return_ew.append(eci_ew[N_sp+id_abpair]* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                        else: #Point terms
+                                            bit = bit_inds[i][k]
+                                            b_clusters_ew.append([bit])
+                                            id_bit = sp_list[i][k]
+                                            point_eci = eci_ew[id_bit]*chg_bits[i][k]**2*H[i][i]
+                                            for m in range(len(bit_inds)):
+                                                id_a = id_bit
+                                                id_b = sp_list[m][-1] #id of the reference specie
+                                                id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b -id_a -1
+                                                #Calculate H_r term with weight!
+                                                point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]
+                                            eci_return_ew.append(point_eci)
+                                            # eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
+                    #Corrections
+                    for b_cluster_ew,b_eci_ew in zip(b_clusters_ew,eci_return_ew):
+                        _in_b_clusters = False
+                        for bc_id,b_cluster in enumerate(b_clusters):
+                            if len(b_cluster)>2:
+                                continue
+                            #b_cluster won't duplicate. Trust Danill.
+                            if b_cluster == b_cluster_ew or Reversed(b_cluster)==b_cluster_ew:                        
+                                eci_return[bc_id]=eci_return[bc_id] + b_eci_ew*2
+                                #*2 because a pair only appear in b_clusters_ew for once, but should be summed twice
+                                _in_b_clusters = True
+                        if not _in_b_clusters:
+                            b_clusters.append(b_cluster_ew)
+                            eci_return.append(b_eci_ew*2)
+        
+                self._bclus_corrected.append(b_clusters)
+                self._ecis_corrected.append(eci_return)
 
         return self._bclus_corrected
 
