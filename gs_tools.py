@@ -370,20 +370,21 @@ class GScanonical(MSONable):
             hard_cls.extend([[hard_marker]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(site_specie_ids[site_id],2)])
         #Hard clauses to enforce sum(specie_occu)=1
 
-        sublat_ps_ids = [[]]*len(self.ce.structure)
+        sublat_sp_ids = [[]]*len(self.ce.structure)
         sc_size = int(round(self.enumlist[mat_id]))
         
+        #Marks variables on the same sublattices and are corresponding to the same specie.
         site_id = 0
         while site_id<N_sites:
             for sp,sp_id in enumerate(site_specie_ids[site_id]):
-                if len(sublat_ps_ids[site_id//sc_size])<len(site_species_ids[site_id]):
-                    sublat_ps_ids[site_id//sc_size].append([])
-                sublat_ps_ids[site_id//sc_size][sp].append(sp_id)
+                if len(sublat_sp_ids[site_id//sc_size])<len(site_species_ids[site_id]):
+                    sublat_sp_ids[site_id//sc_size].append([])
+                sublat_sp_ids[site_id//sc_size][sp].append(sp_id)
             site_id+=1
 
         comp_scale = int(sc_size/round(sum(self.composition[0].values())))
         scaled_composition = [{sp:sublat[sp]*comp_scale for sp in sublat} for sublat in self.composition]
-        for sl_id,sublat in enumerate(sublat_ps_ids):
+        for sl_id,sublat in enumerate(sublat_sp_ids):
             for sp_id,specie_ids in enumerate(sublat):
                 sp_name = self.ce.structure[sl_id].species_and_occu.key()[sp_id]
                 hard_cls.extend([[hard_marker]+\
@@ -471,8 +472,24 @@ class GScanonical(MSONable):
 
 
     def _solve_lower(self,mat_id):
-        #### Input Preparation ####
+    """
+    As known, the energy of a periodic structure can be expressed as shown in Wenxuan's 16 paper (PRB 94.134424, 2016), formula 6a. 
+    The block is mathematically the summbation of cluster interaction terms within a supercell (periodicity) and within 
+    an environment around a supercell. The energy of the whole structure is the sum of all block energies.
+    Here we try to find the minimal block energy with LP. all variables within block are allowed to relax during parametized MAXSAT.
 
+    Warning: 1, For systems with ce.use_ewald, I currently don't have theoretically rigorous idea to correct ewald energy in blocks.
+                If I want to take the ewald energy accuratly into account, I have to extend the block to infinitly large because the
+                ewald term is infinitly ranged.
+                Currently I'm assuming that no geometric frustration appears in the LB state so I can still use the correction for 
+                upperbound. This is not mathematically proved. One must show that all ionic structures should have no less energy
+                per unit cell than a periodic one, for the approximation above to be rigorous.
+             2, Will try cluster tree opt later.
+    (Note: total structure energy is usually normalized with a factor N (size of supercell). Danill has already done this in pyabinitio,
+           so don't normalize again!)
+     """
+        #### Input Preparation ####
+        
         #### Calling Gurobi ####
 
         #### Output Processing ####
@@ -499,15 +516,15 @@ class GScanonical(MSONable):
             gs_socket.solver = d['solver']
         if 'e_lower' in d:
             gs_socket.e_lower=d['e_lower']        
-        if 'lastsupermat' in d:
-            gs_socket.lastsupermat=d['lastsupermat']
         if 'e_upper' in d:
             gs_socket.e_upper=d['e_upper']
-        #Only lower-bound solver gives a bit ordering
+        #Only upper-bound solver gives a bit ordering
         if 'str_upper' in d:
             gs_socket.str_upper=d['str_upper']
         if 'transmat' in d:
             gs_socket.transmat=d['transmat']
+        if 'enumlist=' in d:
+            gs_socket._enumlist=d['enumlist']
         if 'bclus_corrected' in d and 'ecis_corrected' in d and 'bit_inds' in d:
             gs_socket._bclus_corrected = d['bclus_corrected']
             gs_socket._ecis_corrected = d['ecis_corrected']
@@ -538,6 +555,7 @@ class GScanonical(MSONable):
                 'e_upper':self.e_upper,\
                 'str_upper':self.str_upper.as_dict(),\
                 'transmat':self.transmat,\
+                'enumlist':self.enumlist,\
                 'bclus_corrected':self.bclus_corrected,\
                 'ecis_corrected':self.ecis_corrected,\
                 'bit_inds':self.bit_inds,\
@@ -551,7 +569,8 @@ class GScanonical(MSONable):
             settings = {'maxsupercell':self.maxsupercell,\
                         'max_block_range':self.max_block_range,\
                         'num_of_sizes':self.num_of_sizes,\
-                        'selec':self.selec,
+                        'selec':self.selec,\
+                        'enumlist':self.enumlist,\
                         'solver':self.solver}
             with open(gen_settings) as fout:
                 json.dump(settings,fout)
@@ -561,7 +580,7 @@ class GScanonical(MSONable):
 # Canonical to Semi-grand
 ####
 
-def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson'):
+def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson',share_enumlist=True):
     """
     Here we generate all the canonical ground states for the hull in calc_data_file, and store them in gs_file.
     Output:
@@ -600,6 +619,12 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settin
             gs_socket.selec=gs_settings['selec']
         if 'solver' in gs_settings:
             gs_socket.solver=gs_settings['solver']
+        if 'enumlist' in gs_settings and share_enumlist:
+            gs_socket._enumlist=gs_settings['enumlist']
+
+        if not os.path.isfile(gen_settings):
+            print("GS solver setting not recorded. Saving.")
+            gs_socket.write_settings()
               
         gss[compstring]={}
         gs_socket.solve()
