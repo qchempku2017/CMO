@@ -51,6 +51,8 @@ Notes:
 #####
 # Tool functions
 #####
+def Reversed(pair):
+    return [pair[1],pair[0]]
 
 #####
 #Class functions
@@ -471,25 +473,57 @@ class GScanonical(MSONable):
         return upper_e,upper_str
 
 
-    def _solve_lower(self,mat_id):
+    def _solve_lower(self,mat_id,block_range=1):
     """
     As known, the energy of a periodic structure can be expressed as shown in Wenxuan's 16 paper (PRB 94.134424, 2016), formula 6a. 
     The block is mathematically the summbation of cluster interaction terms within a supercell (periodicity) and within 
     an environment around a supercell. The energy of the whole structure is the sum of all block energies.
     Here we try to find the minimal block energy with LP. all variables within block are allowed to relax during parametized MAXSAT.
-
+    
+    block_range: the largest distance to split your clusters away. for ex,if you have a cubic supercell with 3 dimensions L*L*L 
+                 block_range = 3 means you shall only split the interactions in the block to the supercells 3* L away. This is to
+                 make sure that you don't generate too many variables for MAXSAT.
     Warning: 1, For systems with ce.use_ewald, I currently don't have theoretically rigorous idea to correct ewald energy in blocks.
                 If I want to take the ewald energy accuratly into account, I have to extend the block to infinitly large because the
                 ewald term is infinitly ranged.
                 Currently I'm assuming that no geometric frustration appears in the LB state so I can still use the correction for 
-                upperbound. This is not mathematically proved. One must show that all ionic structures should have no less energy
-                per unit cell than a periodic one, for the approximation above to be rigorous.
+                upperbound. The electrostatic parts ARE NOT EXTENDED! This is not mathematically proved. One must show that all 
+                ionic structures should have no less energy per unit cell than a periodic one, for the approximation above to be 
+                rigorous.
              2, Will try cluster tree opt later.
     (Note: total structure energy is usually normalized with a factor N (size of supercell). Danill has already done this in pyabinitio,
            so don't normalize again!)
      """
         #### Input Preparation ####
-        
+        # Extract uncorrected information
+        clus_sup = self.ce.make_supercell(self.enumlist[mat_id])
+        b_clusters_old = []
+        eci_old = []
+
+        for sc,sc_inds in clus_sup.cluster_indices:
+            for i,all_combo in enumerate(sc.bit_combos):
+                for combo in all_combo:
+                    b_clusters_old.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
+                                         for sc_ind in sc_inds])
+                    eci_old.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
+                                         for sc_ind in sc_inds])
+                    
+        # Separate electrostatic(don't extend) and non-electrostatic part(extend)
+        if self.ce.use_ewald:
+            b_clusters = self.b_clus_corrected[mat_id]
+            eci_new = self.ecis_corrected[mat_id]
+            N_ewonly = len(ecis_new)-len(eci_old)
+            b_clusters_ew = b_clusters[-N_ewonly:]
+            eci_ew = eci_new[-N_ewonly:]
+            for clus_id,clus in enumerate(b_clusters[:-N_ewonly]):
+                if eci_old[clus_id]!=eci_new[clus_id]:
+                    b_clusters_ew.append(clus)
+                    eci_ew.append(eci_new[clus_id]-eci_old[clus_id])
+
+        #### Constructing lambda space (do cluster splitting) ####
+
+        #### Coarse Graining lambda space and calling MAXSAT ####
+
         #### Calling Gurobi ####
 
         #### Output Processing ####
