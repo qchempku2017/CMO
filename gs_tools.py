@@ -21,6 +21,7 @@ from pymatgen import Structure,PeriodicSite
 from pymatgen.analysis.structure_matcher import StructureMatcher
 
 from global_tools import *
+from block_tools import CEBlock
 
 __author__ = "Fengyu Xie"
 __version__ = "2019.0.0"
@@ -473,7 +474,7 @@ class GScanonical(MSONable):
         return upper_e,upper_str
 
 
-    def _solve_lower(self,mat_id,block_range=1):
+    def _solve_lower(self,mat_id,block_range=1,hard_marker=1000000000000000000,eci_mul=1000000000):
     """
     As known, the energy of a periodic structure can be expressed as shown in Wenxuan's 16 paper (PRB 94.134424, 2016), formula 6a. 
     The block is mathematically the summbation of cluster interaction terms within a supercell (periodicity) and within 
@@ -520,10 +521,81 @@ class GScanonical(MSONable):
                     b_clusters_ew.append(clus)
                     eci_ew.append(eci_new[clus_id]-eci_old[clus_id])
 
-        #### Constructing lambda space (do cluster splitting) ####
-
+        #### Constructing lambda space (do cluster splitting) ####    
         #### Coarse Graining lambda space and calling MAXSAT ####
+        blk = CEBlock(clus_sup, block_range=block_range, grain_den=4)
+        frame_min_configs = []
+        #CEBlock is a new class I made to represent block in lowerbound solution. It has different _generate_mapping from ClusterSupercell.
+        #Since clusters are too many in number, I only choose the clusters with top 10 ECI to split.
+        for lbds,frame in blk.lambda_frames:
+            print("Solving splitting frame under lambdas:", lbds)
+            N_sites = blk.size
+            soft_cls = []
+            hard_cls = []
 
+            for site_id in range(N_sites):
+                hard_cls.extend([[hard_marker]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(blk.bit_inds[site_id],2)])
+                #Hard clauses to enforce sum(specie_occu)=1
+        
+            all_eci_sum = 0
+            for b_cluster,eci in frame:
+                if int(eci*eci_mul)!=0: 
+                #2016 Solver requires that all weights >=1 positive int!! when abs(eci)<1/eci_mul, cluster will be ignored!
+                    if eci>0:
+                        clause = [int(eci*eci_mul)]
+                        all_eci_sum += int(eci*eci_mul)  
+                #MAXSAT 2016 series only takes in integer weights
+                        for b_id in b_cluster:
+                            clause.append(int(-1*b_id))
+            #Don't worry about the last specie for a site. It is take as a referecne specie, 
+            #thus not counted into nbits and combos at all!!!
+                        soft_cls.append(clause)
+                    else:
+                        clauses_to_add = []
+                        for i in range(len(b_cluster)):
+                            clause = [int(-1*eci*eci_mul),int(b_cluster[i])]
+                            for j in range(i+1,len(b_cluster)):
+                                clause.append(int(-1*b_cluster[j]))
+                            clauses_to_add.append(clause)
+                        soft_cls.extend(clauses_to_add)
+
+            print('Summation of all ecis:',all_eci_sum)
+            all_cls = hard_cls+soft_cls
+            #print('all_cls',all_cls)
+        
+            num_of_vars = sum([len(line) for line in blk.bit_inds])
+            num_of_cls = len(all_cls)
+            maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(num_of_vars,num_of_cls,hard_marker)
+            for clause in all_cls:
+                maxsat_input+=(' '.join([str(lit) for lit in clause])+' 0\n')
+            f_maxsat = open('maxsat.wcnf','w')
+            f_maxsat.write(maxsat_input)
+            f_maxsat.close()
+            #### Calling MAXSAT ####
+            rand_seed = random.randint(1,100000)
+            print('Callsing MAXSAT solver. Using random seed %d.'%rand_seed)
+            os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
+            os.chdir(MAXSAT_PATH)
+            MAXSAT_CMD = './'+self.solver+' ./maxsat.wcnf'
+            if self.solver in INCOMPLETE_MAXSAT:
+                MAXSAT_CMD += ' %d %d'%(rand_seed,MAXSAT_CUTOFF)
+            MAXSAT_CMD += '> maxsat.out'
+            print(MAXSAT_CMD)
+            os.system(MAXSAT_CMD)
+            os.chdir('..')
+            os.system('cp '+MAXSAT_PATH+'maxsat.out'+' ./maxsat.out')
+            print('MAXSAT solution found!')
+
+            #### MAXSAT Output Processing ####
+            maxsat_res = []
+            with open('./maxsat.out') as f_res:
+                lines = f_res.readlines()
+                for line in lines:
+                    if line[0]=='v':
+                        maxsat_res = [int(num) for num in line.split()[1:]]
+            sorted(maxsat_res,key=lambda x:abs(x))
+
+        return lower_e
         #### Calling Gurobi ####
 
         #### Output Processing ####
