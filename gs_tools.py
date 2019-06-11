@@ -217,7 +217,7 @@ class GScanonical(MSONable):
                     H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
 
                     #Ewald energy E_ew = (q+r)*H*(q+r)'. I used a stupid way to get H but quite effective.
-                    supbits = get_bits(clus_sup_new.supercell)
+                    supbits = get_bits(clus_sup.supercell)
                     r = np.array([GetIonChg(bits[-1]) for bits in supbits])
                     chg_bits = [[GetIonChg(bit)-GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
                     H_r = np.dot(H,r)
