@@ -27,10 +27,7 @@ __author__ = "Fengyu Xie"
 __version__ = "2019.0.0"
 
 SITE_TOL = 1e-6
-MAXSAT_PATH = './solvers/'
-MAXSAT_CUTOFF = 600
-COMPLETE_MAXSAT = ['akmaxsat','ccls_akmaxsat']
-INCOMPLETE_MAXSAT = ['CCLS2015']
+
 """ 
 In this file we will provide socket functions to ground state solver I/O. 
 For number of hard clauses issue, we firstly try to reduce the problem size
@@ -52,8 +49,6 @@ Notes:
 #####
 # Tool functions
 #####
-def Reversed(pair):
-    return [pair[1],pair[0]]
 
 #####
 #Class functions
@@ -359,101 +354,21 @@ class GScanonical(MSONable):
         
         return self.bclus_corrected[mat_id],self.ecis_corrected[mat_id],self.bit_inds[mat_id]
             
-    def _solve_upper(self,mat_id,hard_marker=1000000000000000000,eci_mul=1000000000):
+    def _solve_upper(self,mat_id,hard_marker=1000000000000000,eci_mul=1000000):
         """
             Warning: hard_marker is the weight assigened to hard clauses. Should be chosen as a big enough number!
         """
         #### Input Preparation ####
         b_clusters_new,ecis_new,site_specie_ids=self._electrostatic_correction(mat_id)
-        N_sites = len(site_specie_ids)
-        soft_cls = []
-        hard_cls = []
-
-        for site_id in range(N_sites):
-            hard_cls.extend([[hard_marker]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(site_specie_ids[site_id],2)])
-        #Hard clauses to enforce sum(specie_occu)=1
-
-        sublat_sp_ids = [[]]*len(self.ce.structure)
         sc_size = int(round(self.enumlist[mat_id]))
-        
-        #Marks variables on the same sublattices and are corresponding to the same specie.
-        site_id = 0
-        while site_id<N_sites:
-            for sp,sp_id in enumerate(site_specie_ids[site_id]):
-                if len(sublat_sp_ids[site_id//sc_size])<len(site_species_ids[site_id]):
-                    sublat_sp_ids[site_id//sc_size].append([])
-                sublat_sp_ids[site_id//sc_size][sp].append(sp_id)
-            site_id+=1
+        specie_names = [sublat.species_and_occu.key() for sublat in self.ce.structure]
+        Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,conserve_comp=self.composition,sp_names=specie_names)
 
-        comp_scale = int(sc_size/round(sum(self.composition[0].values())))
-        scaled_composition = [{sp:sublat[sp]*comp_scale for sp in sublat} for sublat in self.composition]
-        for sl_id,sublat in enumerate(sublat_sp_ids):
-            for sp_id,specie_ids in enumerate(sublat):
-                sp_name = self.ce.structure[sl_id].species_and_occu.key()[sp_id]
-                hard_cls.extend([[hard_marker]+\
-                                 [int(-1*b_id) for b_id in combo]+\
-                                 [int(b_id) for b_id in specie_id if b_id not in combo] \
-                                 for combo in combinations(specie_ids,scaled_composition[sl_id][sp_name])])
-        #Hard clauses to enforce composition consistency,scales with O(2^N). Updated Apr 12 19
-        
-        all_eci_sum = 0
-        for b_cluster,eci in zip(b_clusters_new,ecis_new):
-            if int(eci*eci_mul)!=0: 
-            #2016 Solver requires that all weights >=1 positive int!! when abs(eci)<1/eci_mul, cluster will be ignored!
-                if eci>0:
-                    clause = [int(eci*eci_mul)]
-                    all_eci_sum += int(eci*eci_mul)  
-            #MAXSAT 2016 series only takes in integer weights
-                    for b_id in b_cluster:
-                        clause.append(int(-1*b_id))
-        #Don't worry about the last specie for a site. It is take as a referecne specie, 
-        #thus not counted into nbits and combos at all!!!
-                    soft_cls.append(clause)
-                else:
-                    clauses_to_add = []
-                    for i in range(len(b_cluster)):
-                        clause = [int(-1*eci*eci_mul),int(b_cluster[i])]
-                        for j in range(i+1,len(b_cluster)):
-                            clause.append(int(-1*b_cluster[j]))
-                        clauses_to_add.append(clause)
-                    soft_cls.extend(clauses_to_add)
-
-        print('Summation of all ecis:',all_eci_sum)
-        all_cls = hard_cls+soft_cls
-        #print('all_cls',all_cls)
-        
-        num_of_vars = sum([len(line) for line in site_specie_ids])
-        num_of_cls = len(all_cls)
-        maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(num_of_vars,num_of_cls,hard_marker)
-        for clause in all_cls:
-            maxsat_input+=(' '.join([str(lit) for lit in clause])+' 0\n')
-        f_maxsat = open('maxsat.wcnf','w')
-        f_maxsat.write(maxsat_input)
-        f_maxsat.close()
         #### Calling MAXSAT ####
-        rand_seed = random.randint(1,100000)
-        print('Callsing MAXSAT solver. Using random seed %d.'%rand_seed)
-        os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
-        os.chdir(MAXSAT_PATH)
-        MAXSAT_CMD = './'+self.solver+' ./maxsat.wcnf'
-        if self.solver in INCOMPLETE_MAXSAT:
-            MAXSAT_CMD += ' %d %d'%(rand_seed,MAXSAT_CUTOFF)
-        MAXSAT_CMD += '> maxsat.out'
-        print(MAXSAT_CMD)
-        os.system(MAXSAT_CMD)
-        os.chdir('..')
-        os.system('cp '+MAXSAT_PATH+'maxsat.out'+' ./maxsat.out')
-        print('MAXSAT solution found!')
+        Call_Maxsat(solver=self.solver)
 
         #### Output Processing ####
-        maxsat_res = []
-        with open('./maxsat.out') as f_res:
-            lines = f_res.readlines()
-            for line in lines:
-                if line[0]=='v':
-                    maxsat_res = [int(num) for num in line.split()[1:]]
-        sorted(maxsat_res,key=lambda x:abs(x))
-
+        maxsat_res = Read_Maxsat()
         cs_bits = get_bits(cs.supercell)
         upper_sites = []
         for s,site in enumerate(site_specie_ids):
@@ -467,14 +382,14 @@ class GScanonical(MSONable):
                     break
             if should_be_ref:
                 upper_sites.append(PeriodicSite(cs_bits[s][-1],st.frac_coords,st.lattice))
+
         upper_str = Structure.from_sites(upper_sites)
         upper_cs = self.ce.supercell_from_structure(upper_str)
         upper_corr = upper_cs.corr_from_structure(upper_str)
         upper_e = np.dot(np.array(self.eci),upper_corr)
         return upper_e,upper_str
 
-
-    def _solve_lower(self,mat_id,block_range=1,hard_marker=1000000000000000000,eci_mul=1000000000):
+    def _solve_lower(self,mat_id,block_range=1,hard_marker=10000000000000,eci_mul=1000000):
     """
     As known, the energy of a periodic structure can be expressed as shown in Wenxuan's 16 paper (PRB 94.134424, 2016), formula 6a. 
     The block is mathematically the summbation of cluster interaction terms within a supercell (periodicity) and within 

@@ -1,3 +1,6 @@
+__author__ = 'Fengyu Xie'
+__version__ = 1.0
+
 from gurobipy import *
 
 ##### Tool functions #####
@@ -6,21 +9,41 @@ from gurobipy import *
 class CEBlock(object):
     '''
         This is a implementation of 'block' in Wenxuan's 16 paper. Iteractive block in 18 paper will be implemented soon.
+
+        A cluster is said to be 'contained' within a SC when all its points resides within the SC, or it has at least one
+        point resides within that SC, and the rest of the points only protrude towards +x, +y, and +z direction. So I 
+        revised ClusterSupercell.generate_mapping to implement this.
+
+        A 'contained' cluster is splitted into neighbor SC's on the +x, +y and +z direction by 3 parameters labeled lambda.
+        By default, only split to the nearest neighbor.
+
+        The number of clusters to be splitted are also highly restricted. By default I only choose to split SymmetrizedClusters
+        (bits included) with top 10 absolute ECI values(of course after electrostatic correction, if required).
+        
+        When blkrange = 1, {s} contains all variables in 0, +1x, +1y, +1z supercells and perhaps, surroundings. The variable
+        indexing rule is such that in SC-0, index of variables range from 1~N_SC, and SC-1x, N_SC+1~2N_SC, so on.
+        if two indices are exactly diffrent by integer times of N_SC, then they are translationally equivalent. 
+
+        clus_sup: the cluster supercell object to bulid a block with
+        eci: eci corresponding to clus_sup.ce
+        block_range: the distance, measured in unit of supercell parameters, that you split your variables away. default: 1,
+                     only split to the neighbors.
+        hard_marker: marker number of a hard clause to use in MAXSAT solver
+        eci_mul: a parameter to magnify your ECI's and truncate them
+        num_of_sclus_tosplit: This specifies how many SymmetrizedClusters are chosen for splitting. Select those with highest
+                              absolute ECI values.
     '''
-    def __init__(clus_sup, eci,block_range=1,hard_marker=1000000000000000000,eci_mul=1000000000,grain_den=4):
+    def __init__(clus_sup, eci,block_range=1,hard_marker=1000000000000000,eci_mul=1000000,num_of_sclus_tosplit=10):
+
         self.cesup = clus_sup
         self.eci = eci
         self.matrix = clus_sup.supercell_matrix
         self.blkrange = block_range
         self.hard_marker=hard_marker
         self.eci_mul = eci_mul
-        self.grain_den = grain_den
+        self.num_of_sclus_tosplit = num_of_sclus_tosplit
         self.use_ewald = self.cesup.use_ewald
         self.use_inv_r = self.cesup.use_inv_r
-
-        self._frames = None
-        self._lambda_grid = None
-        self._frame_min_configs = None
 
         bit_inds_sc = []
         b_id = 1
@@ -36,9 +59,7 @@ class CEBlock(object):
         #later we have anther variable self.bit_inds
         self.ewald_bclusters = []
         if self.use_ewald:
-        #Here we do electro-static correction. Reference zero energy state is the one that all sites 
-        #are occupied by reference compound.
-            print("Making up all ewald interactions")
+            print("Finding pairs corresponding to ewald interactions.")
 
             ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup.supercell])
             H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
@@ -115,12 +136,36 @@ class CEBlock(object):
                                         point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]
                                     eci_return_ew.append(point_eci)
         self.ewald_bclusters = zip(b_clusters_ew,eci_return_ew)
+        
+        self._configs = []
 
 #### public socket ####
     def solve(self):
+        self._configs=self._initialize_configs()
+        while True:
+            m = Model("lambda-solving")
+            m.addVars() #Refer to help(Model.addVars) for more info, add all lambdas here
+            m.addVar(vtype=GRB.CONTINUOUS,name="E")
+            m.setObjective(E,GRB.MAXIMIZE)
+            for config in self._configs:
+                constraints.append(self._config_to_constraint(config))
+            
 #### private tools ####
+    # a_config = tuple(vars_in_sc,vars_in_sc_x+1,vars_in_sc_y+1,vars_in+sc_z+1)
+    # a_clusterfunc_set = tuple(in_sc(ewald_corrected, if needed),in_sc_x+1,in_sc_y+1,in_sc_z+1)
+    def _sc_to_config(self):
+               
 
+    def _initialize_frames(self):
+    # Set initial configurations of {s} using MC method
+        print("Initializing 20 frames with lowest CE-MC energy!")
+        return num_clus_to_split,iniconfigs
 
+    def _config_to_constraint(config):
+    
+    def _config_to_energy(config):
+
+    def _extend_sc_to_config(sc_occu):
 
 
 
@@ -133,48 +178,7 @@ class CEBlock(object):
         for lbds,frame in blk.lambda_frames:
             print("Solving splitting frame under lambdas:", lbds)
             N_sites = blk.size
-            soft_cls = []
-            hard_cls = []
-
-            for site_id in range(N_sites):
-                hard_cls.extend([[hard_marker]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(blk.bit_inds[site_id],2)])
-                #Hard clauses to enforce sum(specie_occu)=1
-        
-            all_eci_sum = 0
-            for b_cluster,eci in frame:
-                if int(eci*eci_mul)!=0: 
-                #2016 Solver requires that all weights >=1 positive int!! when abs(eci)<1/eci_mul, cluster will be ignored!
-                    if eci>0:
-                        clause = [int(eci*eci_mul)]
-                        all_eci_sum += int(eci*eci_mul)  
-                #MAXSAT 2016 series only takes in integer weights
-                        for b_id in b_cluster:
-                            clause.append(int(-1*b_id))
-            #Don't worry about the last specie for a site. It is take as a referecne specie, 
-            #thus not counted into nbits and combos at all!!!
-                        soft_cls.append(clause)
-                    else:
-                        clauses_to_add = []
-                        for i in range(len(b_cluster)):
-                            clause = [int(-1*eci*eci_mul),int(b_cluster[i])]
-                            for j in range(i+1,len(b_cluster)):
-                                clause.append(int(-1*b_cluster[j]))
-                            clauses_to_add.append(clause)
-                        soft_cls.extend(clauses_to_add)
-
-            print('Summation of all ecis:',all_eci_sum)
-            all_cls = hard_cls+soft_cls
-            #print('all_cls',all_cls)
-        
-            num_of_vars = sum([len(line) for line in blk.bit_inds])
-            num_of_cls = len(all_cls)
-            maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(num_of_vars,num_of_cls,hard_marker)
-            for clause in all_cls:
-                maxsat_input+=(' '.join([str(lit) for lit in clause])+' 0\n')
-            f_maxsat = open('maxsat.wcnf','w')
-            f_maxsat.write(maxsat_input)
-            f_maxsat.close()
-            #### Calling MAXSAT ####
+           #### Calling MAXSAT ####
             rand_seed = random.randint(1,100000)
             print('Callsing MAXSAT solver. Using random seed %d.'%rand_seed)
             os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
