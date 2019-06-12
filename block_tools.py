@@ -114,8 +114,11 @@ class CEBlock(object):
                                         #Calculate H_r term with weight!
                                         point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]
                                     eci_return_ew.append(point_eci)
+        self.ewald_bclusters = zip(b_clusters_ew,eci_return_ew)
 
-
+#### public socket ####
+    def solve(self):
+#### private tools ####
 
 
 
