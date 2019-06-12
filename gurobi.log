@@ -1,0 +1,9 @@
+
+Gurobi 8.1.1 (linux64, Python) logging started Wed Jun 12 12:42:23 2019
+
+
+Gurobi 8.1.1 (linux64) logging started Wed Jun 12 12:47:34 2019
+
+
+ERROR 10009: No Gurobi license found (user fengyu_xie, host ginar.lbl.gov, hostid 14939301, cores 16)
+

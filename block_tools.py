@@ -148,7 +148,9 @@ class CEBlock(object):
             m.addVar(vtype=GRB.CONTINUOUS,name="E")
             m.setObjective(E,GRB.MAXIMIZE)
             for config in self._configs:
-                constraints.append(self._config_to_constraint(config))
+                m.addConstraint(self._config_to_constraint(config))
+            m.optimize()
+            self._lambda_param = m.
             
 #### private tools ####
     # a_config = tuple(vars_in_sc,vars_in_sc_x+1,vars_in_sc_y+1,vars_in+sc_z+1)
