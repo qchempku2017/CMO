@@ -226,7 +226,7 @@ class CEBlock(object):
                     eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
                                                   for sc_ind in sc_inds])
 
-        
+        #### Splitting and extension. Trivial. ####
 
         print("Initializing 20 frames with lowest CE-MC energy!")
         self._num_of_lambdas = ...
