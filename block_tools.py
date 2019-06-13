@@ -215,7 +215,7 @@ class CEBlock(object):
         #bclusters with abs(eci)<_cutoff_eciabs will not be splitted.
 
         self._original_bclusters = []
-        eci_return = []
+        self._original_ecis = []
         bit_inds = self.bit_inds_sc    
        
         for sc,sc_inds in self.contained_cluster_indices:
