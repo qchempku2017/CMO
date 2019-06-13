@@ -3,10 +3,13 @@ __version__ = 1.0
 
 from gurobipy import *
 from global_tools import *
+from mc import *
+
 from pymatgen.core.util import lattice_points_in_supercell
 from collections import defaultdict
 ##### Tool functions #####
-
+SITE_TOL = 1E-5
+def _coord_list_mapping_blockonly(subset, superset ,atol=SITE_TOL)
 ##### class functions
 class CEBlock(object):
     '''
@@ -28,6 +31,7 @@ class CEBlock(object):
 
         clus_sup: the cluster supercell object to bulid a block with
         eci: eci corresponding to clus_sup.ce
+        composition: a composition dict in the same form as in GSSocket class.
         block_range: the distance, measured in unit of supercell parameters, that you split your variables away. default: 1,
                      only split to the neighbors.
         hard_marker: marker number of a hard clause to use in MAXSAT solver
@@ -35,12 +39,20 @@ class CEBlock(object):
         num_of_sclus_tosplit: This specifies how many SymmetrizedClusters are chosen for splitting. Select those with highest
                               absolute ECI values.
     '''
-    def __init__(clus_sup, eci,block_range=1,hard_marker=1000000000000000,eci_mul=1000000,num_of_sclus_tosplit=10):
+    def __init__(clus_sup, eci, composition, block_range=1,hard_marker=1000000000000000,eci_mul=1000000,num_of_sclus_tosplit=10,n_iniframe=20):
 
         self.cesup = clus_sup
         self.sym_clusters = clus_sup.cluster_expansion.symmetrized_clusters
         self.eci = eci
+        self.composition = composition
+        sp_count = sum(self.composition[0].values())
+        self.frac_comp = [{float(sublat[sp])/sp_count for sp in sublat} for sublat in composition]
+
         self.matrix = clus_sup.supercell_matrix
+        self.Nsite = len(clus_sup.supercell)
+        self.scs = int(round(np.abs(np.linalg.det(self.matrix))))
+        self.prim = clus_sup.cluster_expansion.structure
+
         self.blkrange = block_range
         self.hard_marker=hard_marker
         self.eci_mul = eci_mul
@@ -48,7 +60,7 @@ class CEBlock(object):
         self.use_ewald = self.cesup.use_ewald
         self.use_inv_r = self.cesup.use_inv_r
         self.fcoord = clus_sup.fcoord
-
+        self.n_iniframe = n_iniframe
         bit_inds_sc = []
         b_id = 1
         for i,site in enumerate(clus_sup.supercell):
@@ -59,6 +71,7 @@ class CEBlock(object):
                 b_id+=1
                 bit_inds_sc.append(site_bit_inds)
         self.bit_inds_sc = bit_inds_sc
+        self.num_bits_sc = b_id-1
 
         #later we have anther variable self.bit_inds
         if self.use_ewald:
@@ -190,8 +203,6 @@ class CEBlock(object):
 #### private tools ####
     # a_config = tuple(vars_in_sc,vars_in_sc_x+1,vars_in_sc_y+1,vars_in+sc_z+1)
     # a_clusterfunc_set = tuple(in_sc(ewald_corrected, if needed),in_sc_x+1,in_sc_y+1,in_sc_z+1)
-    def _sc_to_config(self):
-               
 
     def _initialize(self):
     # Set initial configurations of {s} using MC method.
@@ -207,7 +218,7 @@ class CEBlock(object):
             tcoords = fcoords[:, None, :, :] + ts[None, :, None, :]
             tcs = tcoords.shape
             inds = _coord_list_mapping_blockonly(tcoords.reshape((-1, 3)), 
-                                self.fcoords, ,atol=SITE_TOL).reshape((tcs[0] * tcs[1], tcs[2]))
+                                self.fcoords, atol=SITE_TOL).reshape((tcs[0] * tcs[1], tcs[2]))
             self.contained_cluster_indices.append((sc, inds))            
             # I revised the boundary condition of pbc mapping, to give only clusters that are 'contained' in a SC, and a cluster is nolong wrapped by periodic condition.
         
@@ -221,21 +232,72 @@ class CEBlock(object):
         for sc,sc_inds in self.contained_cluster_indices:
             for i,all_combo in enumerate(sc.bit_combos):
                 for combo in all_combo:
-                    b_clusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
-                                                  for sc_ind in sc_inds])  #need to map extended 'site' back, and need to do the splitting here.
-                    eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
+                    for sc_ind in sc_inds:
+                        bclus = []
+                        for s,site in enumerate(sc_ind):
+                        #site=site_in_sc+(x*(range+1)**2+y*(range+1)+z)*N_site
+                            site_in_sc = site%self.Nsite
+                            dz = (site//self.Nsite)%(self.blkrange+1)
+                            dy = (site//self.Nsite)//(self.blkrange+1)%(self.blkrange+1)
+                            dx = (size//self.Nsite)//(self.blkrange+1)//(self.blkrange+1)
+                            bit_in_sc = bit_inds[site_in_sc][combo[s]]
+                            bit = bit_in_sc+(dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
+                            bclus.append(bit)
+                        self._original_bclusters.append(bclus)
+                    #self._original_bclusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
+                    #                              for sc_ind in sc_inds])  
+                    #need to map extended 'site' back, and need to do the splitting here.
+                    self._original_ecis.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
                                                   for sc_ind in sc_inds])
 
         #### Splitting and extension. Trivial. ####
+        # Mapping rule of a site indexed i in original SC to supercell:(x:+x, y:+y, z:+z)(x,y,z<=extend_range):
+        # new_index = i + (x*(range+1)**2+y*(range+1)+z)*n_bits_sc
+        # When range=1, a clustere would be splitted into 7 images.
+        for bclus,eci in zip(self._original_bclusters,self._original_ecis):
+            if abs(eci)>self._cutoff_eciabs:
+                for x in range(self.blkrange+1):
+                    for y in range(self.blkrange+1):
+                       for z in range(self.blkrange+1):
+                          if x==0 and y==0 and z==0:
+                              break
+                          bclus_xyzimage = [idx + (x*(self.blkrange+1)**2 + y*(self.blkrange+1) + z)* self.num_bits_sc for idx in bclus]
+                          self._splitted_clusters.append(bclus_xyziamge)
+                          self._splitted_ecis.append(eci)
+
+        self.num_of_vars = max([max(bclus) for bclus in self._splitted_clusters])
+        #Max image bit index
 
         print("Initializing 20 frames with lowest CE-MC energy!")
-        self._num_of_lambdas = ...
+        self._num_of_lambdas = len(self._splitted_clusters)
+        #preparing MC
+        
+        sites_WorthToExpand = []
+        for sublat in self.frac_comp:
+            site_WorthToExpand = True
+            for specie in sublat:
+                if abs(sublat[specie]-1.00)<0.001:
+                    site_WorthToExpand=False
+                    break
+            sites_WorthToExpand.append(site_WorthToExpand)
+        indGrps= [list(range(i*self.scs,(i+1)*self.scs)) for i in range(len(self.frac_comp)) if sites_WorthToExpand[i]] 
 
+        order = OrderDisorderedStructureTransformation(algo=2)
+        randSites = []
+        for i,site in enumerate(Prim):
+             randSite = PeriodicSite(RO[i],site.frac_coords,Prim.lattice,properties=site.properties)
+             randSites.append(randSite)
+        randStr = Structure.from_sites(randSites)
+        randStr = order.apply_transformation(randStr)
+        init_occu = clus_sup.occu_from_structure(randStr)
+
+        base_occu  = simulated_anneal(ecis=self.ecis, cluster_supercell=clus_sup,occu=init_occu,ind_groups=indGrps,n_loops=200000, init_T=5100, final_T=100,n_steps=20)
+        # Sampling run
+        occu, min_occu, min_e, rand_occu = run_T(ecis=self.ecis, cluster_supercell=clus_sup, occu=deepcopy(base_occu),T=100,n_loops=200000, ind_groups = indGrps, n_rand=self.n_iniframe, check_unque=True)       
+
+        iniconfigs = [self._scoccu_to_blkconfig(rand) for rand, rand_e in rand_occu]
         return iniconfigs
+    
+    def _scoccu_to_blkconfig(occu):
 
     def _config_to_constraint(config):
-    
-    def _config_to_energy(config):
-
-    def _extend_sc_to_config(sc_occu):
-
