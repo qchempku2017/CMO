@@ -196,7 +196,7 @@ def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,sc_size=None,conserve_comp=No
     f_maxsat.close()
     print('maxsat.wcnf written.')
 
-def Call_Maxsat(solver='ccls_akmaxsat',MAXSAT_PATH='./solvers/',MAXSAT_CUTOFF = 600):
+def Call_MAXSAT(solver='ccls_akmaxsat',MAXSAT_PATH='./solvers/',MAXSAT_CUTOFF = 600):
     COMPLETE_MAXSAT = ['akmaxsat','ccls_akmaxsat']
     INCOMPLETE_MAXSAT = ['CCLS2015']
 
@@ -214,7 +214,7 @@ def Call_Maxsat(solver='ccls_akmaxsat',MAXSAT_PATH='./solvers/',MAXSAT_CUTOFF = 
     os.system('cp '+MAXSAT_PATH+'maxsat.out'+' ./maxsat.out')
     print('MAXSAT solution found!')
 
-def Read_Maxsat():
+def Read_MAXSAT():
     maxsat_res = []
     with open('./maxsat.out') as f_res:
         lines = f_res.readlines()

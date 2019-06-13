@@ -365,10 +365,10 @@ class GScanonical(MSONable):
         Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,conserve_comp=self.composition,sp_names=specie_names)
 
         #### Calling MAXSAT ####
-        Call_Maxsat(solver=self.solver)
+        Call_MAXSAT(solver=self.solver)
 
         #### Output Processing ####
-        maxsat_res = Read_Maxsat()
+        maxsat_res = Read_MAXSAT()
         cs_bits = get_bits(cs.supercell)
         upper_sites = []
         for s,site in enumerate(site_specie_ids):

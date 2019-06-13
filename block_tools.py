@@ -2,7 +2,9 @@ __author__ = 'Fengyu Xie'
 __version__ = 1.0
 
 from gurobipy import *
-
+from global_tools import *
+from pymatgen.core.util import lattice_points_in_supercell
+from collections import defaultdict
 ##### Tool functions #####
 
 ##### class functions
@@ -36,6 +38,7 @@ class CEBlock(object):
     def __init__(clus_sup, eci,block_range=1,hard_marker=1000000000000000,eci_mul=1000000,num_of_sclus_tosplit=10):
 
         self.cesup = clus_sup
+        self.sym_clusters = clus_sup.cluster_expansion.symmetrized_clusters
         self.eci = eci
         self.matrix = clus_sup.supercell_matrix
         self.blkrange = block_range
@@ -44,6 +47,7 @@ class CEBlock(object):
         self.num_of_sclus_tosplit = num_of_sclus_tosplit
         self.use_ewald = self.cesup.use_ewald
         self.use_inv_r = self.cesup.use_inv_r
+        self.fcoord = clus_sup.fcoord
 
         bit_inds_sc = []
         b_id = 1
@@ -57,7 +61,6 @@ class CEBlock(object):
         self.bit_inds_sc = bit_inds_sc
 
         #later we have anther variable self.bit_inds
-        self.ewald_bclusters = []
         if self.use_ewald:
             print("Finding pairs corresponding to ewald interactions.")
 
@@ -135,22 +138,54 @@ class CEBlock(object):
                                         #Calculate H_r term with weight!
                                         point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]
                                     eci_return_ew.append(point_eci)
-        self.ewald_bclusters = zip(b_clusters_ew,eci_return_ew)
+            self._ewald_bclusters = b_clusters_ew
+            self._ewald_ecis = eci_return_ew
         
         self._configs = []
+        self._num_of_lambdas = None
+        self._blkenergy = None
+        self._lambda_param = None
+
+        self._splitted_bclusters = None
+        self._splitted_ecis = None        
+        self._original_bclusters = None
+        self._original_ecis = None
+        
 
 #### public socket ####
     def solve(self):
-        self._configs=self._initialize_configs()
+    '''
+        Generate some configurations(low energy ones) and form facets with them. Optimize LP. See if block energy has converged.
+        If not, update lambdas with LP results and solve MAXSAT with new lambda set, and add the newly solved block config to it,
+        until E converges or no new configs emerges.
+    '''
+        self._configs=self._initialize()
         while True:
             m = Model("lambda-solving")
-            m.addVars() #Refer to help(Model.addVars) for more info, add all lambdas here
+            lambdas = m.addVars(self._num_of_lambdas,ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
             m.addVar(vtype=GRB.CONTINUOUS,name="E")
             m.setObjective(E,GRB.MAXIMIZE)
             for config in self._configs:
-                m.addConstraint(self._config_to_constraint(config))
+                m.addConstraint(self._config_to_constraint(config,lambdas))
+            #And also add constraints
             m.optimize()
-            self._lambda_param = m.
+            self._lambda_param = [v.x for v in m.getValues() if v.varName != "E"]
+            blkenergy = m.objVal
+
+            maxsat_bclus,maxsat_ecis=self._form_maxsat()
+            Write_MAXSAT_input(maxsat_bclus,maxsat_ecis)
+            Call_MAXSAT()
+            new_config = Read_MAXSAT()
+
+            if self._blkenergy:
+                if abs(self._blkenergy-blkenergy)<0.001:
+                    break
+            if new_config in self._configs:
+                break
+
+            self._blkenergy = blkenergy
+            self._configs.append(new_config)
+        return self._blkenergy
             
 #### private tools ####
     # a_config = tuple(vars_in_sc,vars_in_sc_x+1,vars_in_sc_y+1,vars_in+sc_z+1)
@@ -158,10 +193,40 @@ class CEBlock(object):
     def _sc_to_config(self):
                
 
-    def _initialize_frames(self):
-    # Set initial configurations of {s} using MC method
+    def _initialize(self):
+    # Set initial configurations of {s} using MC method.
+        print("Mapping symmetrized bit-clusters in the new rule.")
+        ts = lattice_points_in_supercell(self.matrix)
+        self.cluster_indices = []
+        self.clusters_by_sites = defaultdict(list)
+        for sc in self.sym_clusters:
+            prim_fcoords = np.array([c.sites for c in sc.equivalent_clusters])
+            fcoords = np.dot(prim_fcoords, self.prim_to_supercell)
+            #tcoords contains all the coordinates of the symmetrically equivalent clusters
+            #the indices are: [equivalent cluster (primitive cell), translational image, index of site in cluster, coordinate index]
+            tcoords = fcoords[:, None, :, :] + ts[None, :, None, :]
+            tcs = tcoords.shape
+            inds = _coord_list_mapping_blockonly(tcoords.reshape((-1, 3)), 
+                                self.fcoords, atol=SITE_TOL).reshape((tcs[0] * tcs[1], tcs[2]))            
+            # I revised the boundary condition of pbc mapping, to give only clusters that are 'contained' in a SC, and a cluster is nolong wrapped by periodic condition.
+        
+            b_clusters = []
+            eci_return = []
+
+            for sc,sc_inds in clus_sup.cluster_indices:
+                for i,all_combo in enumerate(sc.bit_combos):
+                    for combo in all_combo:
+                        b_clusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
+                                                  for sc_ind in sc_inds])
+                        eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
+                                                  for sc_ind in sc_inds])
+
+        
+
         print("Initializing 20 frames with lowest CE-MC energy!")
-        return num_clus_to_split,iniconfigs
+        self._num_of_lambdas = ...
+
+        return iniconfigs
 
     def _config_to_constraint(config):
     
@@ -169,43 +234,3 @@ class CEBlock(object):
 
     def _extend_sc_to_config(sc_occu):
 
-
-
-
-
-
-        frame_min_configs = []
-        #CEBlock is a new class I made to represent block in lowerbound solution. It has different _generate_mapping from ClusterSupercell.
-        #Since clusters are too many in number, I only choose the clusters with top 10 ECI to split.
-        for lbds,frame in blk.lambda_frames:
-            print("Solving splitting frame under lambdas:", lbds)
-            N_sites = blk.size
-           #### Calling MAXSAT ####
-            rand_seed = random.randint(1,100000)
-            print('Callsing MAXSAT solver. Using random seed %d.'%rand_seed)
-            os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
-            os.chdir(MAXSAT_PATH)
-            MAXSAT_CMD = './'+self.solver+' ./maxsat.wcnf'
-            if self.solver in INCOMPLETE_MAXSAT:
-                MAXSAT_CMD += ' %d %d'%(rand_seed,MAXSAT_CUTOFF)
-            MAXSAT_CMD += '> maxsat.out'
-            print(MAXSAT_CMD)
-            os.system(MAXSAT_CMD)
-            os.chdir('..')
-            os.system('cp '+MAXSAT_PATH+'maxsat.out'+' ./maxsat.out')
-            print('MAXSAT solution found!')
-
-            #### MAXSAT Output Processing ####
-            maxsat_res = []
-            with open('./maxsat.out') as f_res:
-                lines = f_res.readlines()
-                for line in lines:
-                    if line[0]=='v':
-                        maxsat_res = [int(num) for num in line.split()[1:]]
-            sorted(maxsat_res,key=lambda x:abs(x))
-            if maxsat_res not in frame_min_configs:
-                frame_min_configs.append(maxsat_res)
-                # Coarse grained results might overlap
-
-        for config in frame_min_configs:
- 
