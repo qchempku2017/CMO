@@ -197,8 +197,8 @@ class CEBlock(object):
     # Set initial configurations of {s} using MC method.
         print("Mapping symmetrized bit-clusters in the new rule.")
         ts = lattice_points_in_supercell(self.matrix)
-        self.cluster_indices = []
-        self.clusters_by_sites = defaultdict(list)
+        self.contained_cluster_indices = []
+
         for sc in self.sym_clusters:
             prim_fcoords = np.array([c.sites for c in sc.equivalent_clusters])
             fcoords = np.dot(prim_fcoords, self.prim_to_supercell)
@@ -207,18 +207,23 @@ class CEBlock(object):
             tcoords = fcoords[:, None, :, :] + ts[None, :, None, :]
             tcs = tcoords.shape
             inds = _coord_list_mapping_blockonly(tcoords.reshape((-1, 3)), 
-                                self.fcoords, atol=SITE_TOL).reshape((tcs[0] * tcs[1], tcs[2]))            
+                                self.fcoords, ,atol=SITE_TOL).reshape((tcs[0] * tcs[1], tcs[2]))
+            self.contained_cluster_indices.append((sc, inds))            
             # I revised the boundary condition of pbc mapping, to give only clusters that are 'contained' in a SC, and a cluster is nolong wrapped by periodic condition.
         
-            b_clusters = []
-            eci_return = []
+        self._cutoff_eciabs = sorted(self.ecis,key=lambda x:abs(x))[-self.num_of_sclus_tosplit]
+        #bclusters with abs(eci)<_cutoff_eciabs will not be splitted.
 
-            for sc,sc_inds in clus_sup.cluster_indices:
-                for i,all_combo in enumerate(sc.bit_combos):
-                    for combo in all_combo:
-                        b_clusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
-                                                  for sc_ind in sc_inds])
-                        eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
+        self._original_bclusters = []
+        eci_return = []
+        bit_inds = self.bit_inds_sc    
+       
+        for sc,sc_inds in self.contained_cluster_indices:
+            for i,all_combo in enumerate(sc.bit_combos):
+                for combo in all_combo:
+                    b_clusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
+                                                  for sc_ind in sc_inds])  #need to map extended 'site' back, and need to do the splitting here.
+                    eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
                                                   for sc_ind in sc_inds])
 
         
