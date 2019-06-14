@@ -350,23 +350,32 @@ class CEBlock(object):
                             config[occupied_id]=-1*config[occupied_id]
         return config
                
-    def _config_to_constraint(self,config):
-    #### Need to read more of Gurobi manuals.        
+    def _config_to_constraint(self,config,lambdas):
+    #### LinExpr class provided by gurobi is extrememly easy to manipulate and modify! For example:
+    #    cond = LinExpr() //then we have an empty linear expression.
+    #    cond += x+y //the variable x is linked into the linear expression, and the expression becomes x+y. Adress linked, not the values!
+    #    And also:
+    #    cond += vec[2]+3*vec[3]
+        
 
-    def _set_hard_constraints(self):
-        all_hard_consts = []
+    def _set_hard_constraints(self,lambdas):
+        all_hard_exprs = []
         for id0,(bclus,eci) in enumerate(zip(self._original_bclus,self._original_ecis)):
              extended_ids = list( range(id0*(self.blkrange+1)**3+1, (id0+1)*(self.blkrange+1)**3) )
-             all_hard_consts.append()
+             hard_expr = LinExpr()
+             for e_id in extended_ids:
+                 hard_expr += lambdas[e_id]
+             all_hard_exprs.append(hard_expr)
+        return all_hard_exprs
  
     def _form_maxsat(self):
     '''
        This generates a set of bclus and their corresponding ecis, to feed into global_tools.Write_to_MAXSAT function.
     '''
-        maxsat_bclus = []
+        maxsat_bclusters = []
         maxsat_ecis = []
-        for id0,(bclus,eci) in enumerate(zip(self._original_bclus,self._original_ecis)):
-            maxsat_bclus.append(bclus)
+        for id0,(bclus,eci) in enumerate(zip(self._original_bclusters,self._original_ecis)):
+            maxsat_bclusters.append(bclus)
             extended_ids = list( range(id0*(self.blkrange+1)**3+1, (id0+1)*(self.blkrange+1)**3) )
             # id of bclustet's images in neighboring supercells.
             splitted_sum = 0
@@ -375,6 +384,20 @@ class CEBlock(object):
             maxsat_ecis.append(1-splitted_sum)
             # Please, please do not merge the two cycles! Or you will breaking the corresponding relation between bclus and eci!
             for ext_id in extended_ids:
-                maxsat_bclus.append(self._splitted_bclus[ext_id])
+                maxsat_bclusters.append(self._splitted_bclusters[ext_id])
                 maxsat_ecis.append(self._splitted_ecis[ext_id])
-        return maxsat_bclus,maxsat_ecis
+
+        for bclus_ew,eci in zip(self._ewald_bclusters,self._ewald_ecis):
+            _in_b_clusters = False
+            for bc_id,bclus in enumerate(maxsat_bclusters):
+                if len(b_cluster)>2:
+                    continue
+                if bclus_ew == bclus or bclus_ew == Reversed(bclus):
+                    maxsat_ecis[bc_id]=maxsat_ecis[bc_id]+2*eci
+                    _in_b_clusters = True
+                    break
+                if not _in_b_clusters:
+                    maxsat_bclusters.append(bclus_ew)
+                    maxsat_ecis.append(eci*2)
+
+        return maxsat_bclusters,maxsat_ecis

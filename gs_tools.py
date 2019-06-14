@@ -295,6 +295,7 @@ class GScanonical(MSONable):
                                 eci_return[bc_id]=eci_return[bc_id] + b_eci_ew*2
                                 #*2 because a pair only appear in b_clusters_ew for once, but should be summed twice
                                 _in_b_clusters = True
+                                break
                         if not _in_b_clusters:
                             b_clusters.append(b_cluster_ew)
                             eci_return.append(b_eci_ew*2)
