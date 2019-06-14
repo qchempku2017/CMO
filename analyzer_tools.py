@@ -215,7 +215,7 @@ def load_data(primfile='prim.cif', calc_data_file='calcdata.mson', vaspdir='vasp
                 with open(os.path.join(root, 'OUTCAR')) as outfile:
                     outcar_string = outfile.read()
                 if 'reached required accuracy' not in outcar_string:
-                    print('Instance {} did not converge to required accuracy. Skipping.')
+                    print('Instance {} did not converge to required accuracy. Skipping.'.format(root))
                     continue
                 TotE=Oszicar(os.path.join(root, 'OSZICAR')).final_energy;
                 # Checking convergence
