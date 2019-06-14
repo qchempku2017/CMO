@@ -204,10 +204,17 @@ class CEBlock(object):
             lambdas = m.addVars(self._num_of_lambdas,ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
             m.addVar(vtype=GRB.CONTINUOUS,name="E")
             m.setObjective(E,GRB.MAXIMIZE)
+   
+            # weight of all original clusters shouldn't be less than 0. 'Hard' constraints.
+            all_hard = self._set_hard_expressions(lambdas)
+            for hard in all_hard:
+                m.addConstraint(hard,sense=GRB.LESS_EQUAL,rhs=1.0)
+
+            # E = sum(J*Clus), to maximize E, use E-sum(J*clus)<=0, 'soft' constraints.
             for config in self._configs:
-                m.addConstraint(self._config_to_constraint(config,lambdas))
-            #And also add 'hard' constraints so that weights of the unsplitted clusters won't go < 0.
-            for 
+                soft_expr = self._config_to_soft_expression(config,lambdas)
+                m.addConstraint(soft_expr, GRB.LESS_EQUAL, E)
+            
             m.optimize()
             self._lambda_param = [v.x for v in m.getValues() if v.varName != "E"]
             blkenergy = m.objVal
@@ -350,18 +357,35 @@ class CEBlock(object):
                             config[occupied_id]=-1*config[occupied_id]
         return config
                
-    def _config_to_constraint(self,config,lambdas):
+    def _config_to_soft_expression(self,config,lambdas):
     #### LinExpr class provided by gurobi is extrememly easy to manipulate and modify! For example:
     #    cond = LinExpr() //then we have an empty linear expression.
     #    cond += x+y //the variable x is linked into the linear expression, and the expression becomes x+y. Adress linked, not the values!
     #    And also:
     #    cond += vec[2]+3*vec[3]
-        o_clusfuncs,s_clusfuncs=self._config_to_clusfuncs(config)
-        for clusfunc,lbd in 
-    
-    def _config_to_clusfuncs(config):
+        o_clusfuncs,s_clusfuncs,e_clusfuncs=self._config_to_clusfuncs(config)
+        soft_expr = LinExpr()
+        for i,clusfunc in enumerate(s_clusfuncs):
+            soft_expr+=clusfunc*self._splitted_ecis[i]*lambdas[i]
+        for i,clusfunc in enumerate(e_clusfuncs):
+            soft_expr+=clusfunc*self._ewald_ecis[i]
+        for i,clusfunc in enumerate(o_clusfuncs):
+            extended_ids = list( range(i*(self.blkrange+1)**3+1, (i+1)*(self.blkrange+1)**3) )
+            hard_expr = LinExpr()
+            for e_id in extended_ids:
+                hard_expr += lambdas[e_id]
+            soft_expr += clusfunc*self._original_ecis[i]*(1-hard_expr)
+        return soft_expr
+
+    def _config_to_clusfuncs(self,config):
     # Calculate cluster functions based on configuration of the block.
-        return original_clusfuncs, splitted_clusfuncs
+        original_clusfuncs = [reduce( (lambda x,y:x*y), [(1 if config[bit-1]>0 else 0) for bit in bclus])\
+                               for bclus in self._original_bclusters]
+        splitted_clusfuncs = [reduce( (lambda x,y:x*y), [(1 if config[bit-1]>0 else 0) for bit in bclus])\
+                               for bclus in self._splitted_bclusters]  
+        ewald_clusfuncs = [reduce( (lambda x,y:x*y), [(1 if config[bit-1]>0 else 0) for bit in bclus])\
+                               for bclus in self._ewald_bclusters]        
+        return original_clusfuncs, splitted_clusfuncs, ewald_clusfuncs
 
     def _set_hard_expressions(self,lambdas):
         all_hard_exprs = []
