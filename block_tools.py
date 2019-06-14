@@ -356,9 +356,14 @@ class CEBlock(object):
     #    cond += x+y //the variable x is linked into the linear expression, and the expression becomes x+y. Adress linked, not the values!
     #    And also:
     #    cond += vec[2]+3*vec[3]
-        
+        o_clusfuncs,s_clusfuncs=self._config_to_clusfuncs(config)
+        for clusfunc,lbd in 
+    
+    def _config_to_clusfuncs(config):
+    # Calculate cluster functions based on configuration of the block.
+        return original_clusfuncs, splitted_clusfuncs
 
-    def _set_hard_constraints(self,lambdas):
+    def _set_hard_expressions(self,lambdas):
         all_hard_exprs = []
         for id0,(bclus,eci) in enumerate(zip(self._original_bclus,self._original_ecis)):
              extended_ids = list( range(id0*(self.blkrange+1)**3+1, (id0+1)*(self.blkrange+1)**3) )
