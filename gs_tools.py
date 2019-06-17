@@ -122,7 +122,10 @@ class GScanonical(MSONable):
                 self.e_lower = e_lower
                 self.solved = True
                 print("GS found. Energy: {} eV/prim, structure: {}".format(self.e_upper,self.e_lower))
-            else
+                return True
+            else:
+                print("GS not found. You may try to adjust GS tools settings.")
+                return False
     
     @property
     def enumlist(self):
@@ -391,7 +394,7 @@ class GScanonical(MSONable):
         return upper_e,upper_str
 
     def _solve_lower(self,mat_id,block_range=1,hard_marker=10000000000000,eci_mul=1000000):
-    """
+        """
     As known, the energy of a periodic structure can be expressed as shown in Wenxuan's 16 paper (PRB 94.134424, 2016), formula 6a. 
     The block is mathematically the summbation of cluster interaction terms within a supercell (periodicity) and within 
     an environment around a supercell. The energy of the whole structure is the sum of all block energies.
@@ -410,12 +413,13 @@ class GScanonical(MSONable):
              2, Will try cluster tree opt later.
     (Note: total structure energy is usually normalized with a factor N (size of supercell). Danill has already done this in pyabinitio,
            so don't normalize again!)
-     """
+        """
+
         clus_sup = self.ce.make_supercell(self.enumlist[mat_id])
         blk = CEBlock(clus_sup, block_range=block_range,hard_marker=hard_marker,eci_mul=eci_mul, grain_den=4)           
         #### Calling Gurobi ####
         lower_e = blk.solve()
-    return lower_e
+        return lower_e
 
 ####
 # I/O interface
@@ -560,8 +564,8 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settin
         for compstring in gss:
             if 'gs_energy' not in gss_old[compstring] or 'gs_energy' not in gss[compstring] or \
                     abs(gss_old[compstring]['gs_energy']-gss[compstring]['gs_energy'])>0.001:
-                         _gs_converged = False
-                        break
+                _gs_converged = False
+                break
     else:
          _gs_converged = False
 
