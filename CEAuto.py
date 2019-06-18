@@ -71,7 +71,7 @@ if __name__ == "__main__":
     parser.add_argument('--vasprun',help="Store all vasp running data under this directory.",type=str,default='vasp_run')
     parser.add_argument('--maxdeformation',help="Maximum tolerable deformation between input and relaxed structures. \
                         Structure will be dropped when relaxation exceed this criteria.",type=str,\
-                        default='{"ltol":0.2,"stol":0.1,"angle_tol":5}')
+                        default='{"ltol":0.2,"stol":0.15,"angle_tol":5}')
     parser.add_argument('--gensetting',help="Generator setting file. Will use old one if detected. This overwrites all other args.",\
                         type=str, default='generator_settings.mson')
     parser.add_argument('--vaspsetting',help="VASP setting file. Is a mson file. See doc of generator_tools.py for description.",type=str,default='vasp_settings.mson')
@@ -113,10 +113,12 @@ if __name__ == "__main__":
     elif args.fit:
         #Fitting a CE model
         maxdeformation=json.loads(args.maxdeformation)
-
-        load_data(args.prim,args.calcdata,args.vasprun,maxdeformation)
         ceradius = json.loads(args.ceradius) if args.ceradius else None
-        fit_ce(args.calcdata,args.cefile,ceradius)
+
+        analyzer = CalcAnalyzer(vaspdir=args.vasprun,prim_file=args.prim,calc_data_file=args.calcdata,ce_file=args.cefile,ce_radius=ceradius,max_deformation=maxdeformation)
+
+        analyzer.fit_ce(args.calcdata,args.cefile,ceradius)
+        analyzer.write_files()
 
     elif args.solveGS:
         #Solving and updating GS structures.
