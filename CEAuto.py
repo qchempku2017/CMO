@@ -117,7 +117,7 @@ if __name__ == "__main__":
 
         analyzer = CalcAnalyzer(vaspdir=args.vasprun,prim_file=args.prim,calc_data_file=args.calcdata,ce_file=args.cefile,ce_radius=ceradius,max_deformation=maxdeformation)
 
-        analyzer.fit_ce(args.calcdata,args.cefile,ceradius)
+        analyzer.fit_ce()
         analyzer.write_files()
 
     elif args.solveGS:

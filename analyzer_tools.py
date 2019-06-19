@@ -117,7 +117,7 @@ class CalcAnalyzer(MSONable):
                 ce_radius[4]=d_nn*2.0
 
             self.max_de = max_de
-            self.max_ewald = max_ew
+            self.max_ew = max_ew
 
             self.ce = ClusterExpansion.from_radii(self.prim, ce_radius,ltol=max_deformation['ltol'], \
                                      stol=max_deformation['stol'], angle_tol=max_deformation['angle_tol'],\
