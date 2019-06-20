@@ -116,7 +116,7 @@ if __name__ == "__main__":
         ceradius = json.loads(args.ceradius) if args.ceradius else None
 
         analyzer = CalcAnalyzer(vaspdir=args.vasprun,prim_file=args.prim,calc_data_file=args.calcdata,ce_file=args.cefile,ce_radius=ceradius,max_deformation=maxdeformation)
-
+        #print('analyzer initialized')
         analyzer.fit_ce()
         analyzer.write_files()
 

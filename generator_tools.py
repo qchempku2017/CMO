@@ -302,47 +302,6 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
 
     print('Saving of %s successful. Writing VASP input files later.'%outdir)
 
-def _write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
-    # This is a somewhat strange input set. Essentially the matgen input set (PBE+U), but with tigher
-    # convergence.
-    # This is also a somewhat outdated and convoluted way to generate VASP inputs but it should work fine.
-    # These changes to the default input set give much better results.
-    # Do not increaes the EDIFF to make it converge faster!!!
-    # If convergence is too slow, reduce the K-points
-    # This is still using PBE+U with matgen U values though. Need to use MITCompatibility (after the run)
-    # to apply oxygen corrections and such.
-    # In other expansions that rely on SCAN or HSE, the corrections are different - no O correction for example
-    # In additional_vasp_settings, you can add to, or modify the default VASPsettings.
-    VASPSettings={"ALGO": 'VeryFast',"ISYM": 0, "ISMEAR": 0, "EDIFF": 1e-6, "NELM": 400, "NSW": 1000, "EDIFFG": -0.02,
-                     'LVTOT': False, 'LWAVE': False, 'LCHARG': False, 'NELMDL': -6, 'NELMIN': 8,
-                     'LSCALU': False, 'NPAR': 2, 'NSIM': 2, 'POTIM': 0.25, 'LDAU': True};
-
-    if additional_vasp_settings:
-        for key in additional_vasp_settings:
-            VASPSettings[key]=additional_vasp_settings[key]
-            print('Changed {} setting to {}.'.format(key,additional_vasp_settings[key]))
-
-    if not os.path.isdir(VASPDir):os.mkdir(VASPDir);
-
-    # Joggle the lattice to help symmetry broken relaxation. You may turn it off by setting strain=None
-    if strain:
-         deformation = Deformation(strain)
-         defStr = deformation.apply_to_structure(Str)
-
-    #Str=Structure(StrainedLatt,Species,FracCoords,to_unit_cell=False,coords_are_cartesian=False);
-    VIO=MITRelaxSet(defStr,potcar_functional = functional); VIO.user_incar_settings=VASPSettings;
-    VIO.incar.write_file(os.path.join(VASPDir,'INCAR'));
-    VIO.poscar.write_file(os.path.join(VASPDir,'POSCAR'));
-    Kpoints.automatic(num_kpoints).write_file(os.path.join(VASPDir,'KPOINTS'));
-    # Use PAW_PBE pseudopotentials, cannot use PBE_52, this does not exist on ginar!
-    # NOTE: For the POTCARs to work, you need to set up the VASP pseudopotential directory as per the
-    # pymatgen instructions, and set the path to them in .pmgrc.yaml located in your home folder.
-    # The pymatgen website has instuctrions for how to do this.
-    POTSyms=VIO.potcar_symbols;
-    for i, Sym in enumerate(POTSyms):
-        if Sym == 'Zr': POTSyms[i]='Zr_sv';
-    Potcar(POTSyms,functional=functional).write_file(os.path.join(VASPDir,'POTCAR'));
-
 def _gen_vasp_inputs(SearchDir,functional='PBE', num_kpoints=25,add_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
     """
     Search through directories, find POSCARs and generate FM VASP inputs.
@@ -354,7 +313,7 @@ def _gen_vasp_inputs(SearchDir,functional='PBE', num_kpoints=25,add_vasp_setting
         print("Writing VASP inputs for {}".format(Root));
         Str=Poscar.from_file(os.path.join(Root,'POSCAR')).structure
         VASPDir= os.path.join(Root,'fm.0'); 
-        _write_vasp_inputs(Str,VASPDir,functional,num_kpoints,add_vasp_settings,strain);
+        write_vasp_inputs(Str,VASPDir,functional,num_kpoints,add_vasp_settings,strain);
 
 def _generate_axis_ref(compounds):
     """

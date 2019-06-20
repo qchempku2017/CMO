@@ -21,13 +21,15 @@ from pymatgen import Structure,PeriodicSite
 from pymatgen.analysis.structure_matcher import StructureMatcher
 
 from global_tools import *
-from block_tools import CEBlock
 
 __author__ = "Fengyu Xie"
 __version__ = "2019.0.0"
 
 SITE_TOL = 1e-6
-
+MAXSAT_PATH = './solvers/'
+MAXSAT_CUTOFF = 600
+COMPLETE_MAXSAT = ['akmaxsat','ccls_akmaxsat']
+INCOMPLETE_MAXSAT = ['CCLS2015']
 """ 
 In this file we will provide socket functions to ground state solver I/O. 
 For number of hard clauses issue, we firstly try to reduce the problem size
@@ -60,24 +62,17 @@ class GScanonical(MSONable):
     """
 
     def __init__(self, ce, eci, composition, transmat=[[1,0,0],[0,1,0],[0,0,1]],maxsupercell=16, \
-                 max_block_range = 1,num_of_sizes=4, selec=20, hard_marker=1000000000000000, \
-                 eci_mul=1000000,solver='ccls_akmaxsat',\
-                 num_split=10,n_iniframe=20):
+                 max_block_range = 10,num_of_sizes=4, selec=20, solver='ccls_akmaxsat'):
         """
         Args:
             ce: a cluster expansion object that you wish to solve the GS of.
             eci: eci's of clusters in ce
+            composition: composition of the canonical ensemble. Format given in composition_by_site file.
             maxsupercell: maximum supercell sizes
-            max_block_range: maximum block extension range. This determines how far an image you want to split your
-                             clusters to.(Unit: supercell dimensions)
-            num_of_sizes: number of supercell sizes to be enumerated. When num_of_sizes = 4 while maxsupercell = 16,
-                          enumerated sizes are [4,8,12,16]
-            selec: number of enumerated supercell matrices to select.
+            max_block_range: maximum block extension range.(prim/dimension)
+            num_of_sizes: number of supercell sizes to be enumerated.
+            selec: number of supercell matrix to selec.
             solver: the MAXSAT solver used to solve the upper bound problem. Default: ccls_akmaxsat.
-            hard_marker: the marking number of hard clauses in MAXSAT. Should be sufficiently large (>sum(ECI)).
-            eci_mul: since many MAXSAT only take integer weights, we multiply and floor ECI's with this to make integers.
-            num_split: number of Symmetrized clusters to split. When num_split = 10, only sc's with top 10 ECI absolute values will be splitted.
-            n_iniframe: number of sampled structures to intialize LP in lowerbound problem.
             composition: a list of dictionaries that represents species occupation ratio on each site. For example:
                          [{'Li+':8,'Co3+':6,'Co4+':2},{'O2-':13,'F-':3}]
                          Compositions are read from the CE file constructed by the CE generator.
@@ -114,11 +109,7 @@ class GScanonical(MSONable):
         self.transmat = transmat
         if self.transmat != [[1,0,0],[0,1,0],[0,0,1]]:
             print("Using transformation matrix:",self.transmat,"in enumeration.")
-
-        self.hard_marker = hard_marker
-        self.eci_mul = eci_mul
-        self.num_split = num_split
-        self.n_iniframe = n_iniframe
+    
 ####
 # Callable interface
 ####       
@@ -133,10 +124,7 @@ class GScanonical(MSONable):
                 self.e_lower = e_lower
                 self.solved = True
                 print("GS found. Energy: {} eV/prim, structure: {}".format(self.e_upper,self.e_lower))
-                return True
-            else:
-                print("GS not found. You may try to adjust GS tools settings.")
-                return False
+            else
     
     @property
     def enumlist(self):
@@ -206,9 +194,6 @@ class GScanonical(MSONable):
                 eci = self.eci
                 eci_new = {size:[eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in clusters[size]] \
                                for size in clusters}
-                b_clusters = []
-                eci_return = []
-
                 for sc,sc_inds in clus_sup.cluster_indices:
                     for i,all_combo in enumerate(sc.bit_combos):
                         for combo in all_combo:
@@ -220,19 +205,16 @@ class GScanonical(MSONable):
                 if self.use_ewald:
                     #Here we do electro-static correction. Reference zero energy state is the one that all sites 
                     #are occupied by reference compound.
-                    print("Making up all ewald interactions for supercell:",mat)
+                    print("Making up all pair interactions for supercell:",mat)
 
                     ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup.supercell])
                     H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
 
                     #Ewald energy E_ew = (q+r)*H*(q+r)'. I used a stupid way to get H but quite effective.
-                    supbits = get_bits(clus_sup.supercell)
+                    supbits = get_bits(clus_sup_new.supercell)
                     r = np.array([GetIonChg(bits[-1]) for bits in supbits])
                     chg_bits = [[GetIonChg(bit)-GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
                     H_r = np.dot(H,r)
-                    
-                    b_clusters_ew = []
-                    eci_return_ew = []
 
                     if not self.use_inv_r:
                         eci_ew = eci[-1]
@@ -244,78 +226,54 @@ class GScanonical(MSONable):
                                         if bit_inds[i][k]!=bit_inds[j][l]:
                                             bit_a = bit_inds[i][k]
                                             bit_b = bit_inds[j][l]
-                                            b_clusters_ew.append([bit_a,bit_b]) 
-                                            eci_return_ew.append(eci_ew* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                            b_clusters.append([bit_a,bit_b]) 
+                                            eci_return.append(eci_ew* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
                                         else:
                                             bit = bit_inds[i][k]
-                                            b_clusters_ew.append([bit])
-                                            eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
-
+                                            b_clusters.append([bit])
+                                            eci_return.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
+                        #Deduplication.
+                        b_clusters_uniq = []
+                        eci_return_uniq = []
+                        for b_cluster,eci in zip(b_clusters,eci_return):
+                            for idx,b_cluster_new in enumerate(b_clusters_uniq):
+                                if set(b_cluster_new)==set(b_cluster):
+                                    eci_return_uniq[idx]=eci_return_uniq[idx]+eci
+                                else:
+                                    b_clusters_uniq.append(b_cluster)
+                                    eci_return_uniq.append(eci)
+                                
                     else:
                         #When using inv_r, an independent ewald sum is generated for each specie-specie pair, and the sums are
                         #considered components of corr
-                        N_sp = sum([len(site.species_and_occu) for site in clus_sup.supercell])
-                        N_eweci = N_sp+N_sp*(N_sp-1)//2
-                        eci_ew = eci[-N_eweci:]
-                        
                         equiv_sites = []
                         for sc,inds in clus_sup.cluster_indices:
                             if len(sc.bits)>1:
                                 break
                             equiv_sites.append(inds[:,0])
 
-                        sp_list = []
-                        sp_id = 0
+                        equiv_species = []
+                        num_sp_on_sublats = []
                         for sublat in equiv_sites:
-                            sublat_sp_list = []
-                            for specie_id in bit_inds[sublat[0]]:
-                                sublat_sp_list.append(sp_id)
-                                sp_id += 1
-                            sp_list.extend([sublat_sp_list]*len(sublat))
-                       
-                        for i in range(len(bit_inds)):
-                            for j in range(i,len(bit_inds)):
-                                for k in range(len(bit_inds[i])-1):
-                                    for l in range((k if i==j else 0),len(bit_inds[j])-1):
-                                        if bit_inds[i][k]!=bit_inds[j][l]:
-                                            bit_a = bit_inds[i][k]
-                                            bit_b = bit_inds[j][l]
-                                            b_clusters_ew.append([bit_a,bit_b])
-                                            id_a = sp_list[i][k]
-                                            id_b = sp_list[j][l]
-                                            id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b - id_a -1 # Serial id of a,b pair in eci_ew list.
-                                            eci_return_ew.append(eci_ew[N_sp+id_abpair]* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
-                                        else: #Point terms
-                                            bit = bit_inds[i][k]
-                                            b_clusters_ew.append([bit])
-                                            id_bit = sp_list[i][k]
-                                            point_eci = eci_ew[id_bit]*chg_bits[i][k]**2*H[i][i]
-                                            for m in range(len(bit_inds)):
-                                                id_a = id_bit
-                                                id_b = sp_list[m][-1] #id of the reference specie
-                                                id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b -id_a -1
-                                                #Calculate H_r term with weight!
-                                                point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]
-                                            eci_return_ew.append(point_eci)
-                                            # eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
-                    #Corrections
-                    for b_cluster_ew,b_eci_ew in zip(b_clusters_ew,eci_return_ew):
-                        _in_b_clusters = False
-                        for bc_id,b_cluster in enumerate(b_clusters):
-                            if len(b_cluster)>2:
-                                continue
-                            #b_cluster won't duplicate. Trust Danill.
-                            if b_cluster == b_cluster_ew or Reversed(b_cluster)==b_cluster_ew:                        
-                                eci_return[bc_id]=eci_return[bc_id] + b_eci_ew*2
-                                #*2 because a pair only appear in b_clusters_ew for once, but should be summed twice
-                                _in_b_clusters = True
-                                break
-                        if not _in_b_clusters:
-                            b_clusters.append(b_cluster_ew)
-                            eci_return.append(b_eci_ew*2)
-        
-                self._bclus_corrected.append(b_clusters)
-                self._ecis_corrected.append(eci_return)
+                            num_sp_on_sublat=len(bit_inds[sublat[0]])
+                            num_sp_on_sublats.append(num_sp_on_sublat)
+                            for sp_id in range(num_sp_on_sublat):
+                                equiv_species_sublat = []
+                                for site_id in sublat:
+                                    equiv_species_sublat.append(bit_inds[site_id][sp_id])
+                                equiv_species.append(equiv_species_sublat)
+                                                    
+                        #Find corresponding specie pair indices in eci_ew
+                        idx_sp_on_sublats = [list(range(num)) for num in num_sp_on_sublats]
+                        for i,specie in enumerate(equiv_species):
+                            
+
+                    self._bclus_corrected.append(b_clusters_uniq)
+                    self._ecis_corrected.append(eci_return_uniq)
+
+                else:
+                    self._bclus_corrected.append(b_clusters)
+                    self._ecis_corrected.append(eci_return)
 
         return self._bclus_corrected
 
@@ -365,26 +323,105 @@ class GScanonical(MSONable):
         such matrix elements will be added. Finally, will remove the ewald related term(s).
             At the beginning of initialization, the self.enumlist and ewald corrections would already have been done. You gotta save a lot of time.
             mat_id: current supercell matrix id.
+            Warning: still a piece of pseudocode!!!!!
         """
         
         return self.bclus_corrected[mat_id],self.ecis_corrected[mat_id],self.bit_inds[mat_id]
             
-    def _solve_upper(self,mat_id):
+    def _solve_upper(self,mat_id,hard_marker=1000000000000000000,eci_mul=1000000000):
         """
             Warning: hard_marker is the weight assigened to hard clauses. Should be chosen as a big enough number!
         """
         #### Input Preparation ####
         b_clusters_new,ecis_new,site_specie_ids=self._electrostatic_correction(mat_id)
-        sc_size = int(round(self.enumlist[mat_id]))
-        specie_names = [sublat.species_and_occu.key() for sublat in self.ce.structure]
-        Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,conserve_comp=self.composition,\
-                           sp_names=specie_names, hard_marker=self.hard_marker, eci_mul=self.eci_mul)
+        N_sites = len(site_specie_ids)
+        soft_cls = []
+        hard_cls = []
 
+        for site_id in range(N_sites):
+            hard_cls.extend([[hard_marker]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(site_specie_ids[site_id],2)])
+        #Hard clauses to enforce sum(specie_occu)=1
+
+        sublat_sp_ids = [[]]*len(self.ce.structure)
+        sc_size = int(round(self.enumlist[mat_id]))
+        
+        site_id = 0
+        while site_id<N_sites:
+            for sp,sp_id in enumerate(site_specie_ids[site_id]):
+                if len(sublat_ps_ids[site_id//sc_size])<len(site_species_ids[site_id]):
+                    sublat_ps_ids[site_id//sc_size].append([])
+                sublat_ps_ids[site_id//sc_size][sp].append(sp_id)
+            site_id+=1
+
+        comp_scale = int(sc_size/round(sum(self.composition[0].values())))
+        scaled_composition = [{sp:sublat[sp]*comp_scale for sp in sublat} for sublat in self.composition]
+        for sl_id,sublat in enumerate(sublat_ps_ids):
+            for sp_id,specie_ids in enumerate(sublat):
+                sp_name = self.ce.structure[sl_id].species_and_occu.key()[sp_id]
+                hard_cls.extend([[hard_marker]+\
+                                 [int(-1*b_id) for b_id in combo]+\
+                                 [int(b_id) for b_id in specie_id if b_id not in combo] \
+                                 for combo in combinations(specie_ids,scaled_composition[sl_id][sp_name])])
+        #Hard clauses to enforce composition consistency,scales with O(2^N). Updated Apr 12 19
+        
+        all_eci_sum = 0
+        for b_cluster,eci in zip(b_clusters_new,ecis_new):
+            if int(eci*eci_mul)!=0: 
+            #2016 Solver requires that all weights >=1 positive int!! when abs(eci)<1/eci_mul, cluster will be ignored!
+                if eci>0:
+                    clause = [int(eci*eci_mul)]
+                    all_eci_sum += int(eci*eci_mul)  
+            #MAXSAT 2016 series only takes in integer weights
+                    for b_id in b_cluster:
+                        clause.append(int(-1*b_id))
+        #Don't worry about the last specie for a site. It is take as a referecne specie, 
+        #thus not counted into nbits and combos at all!!!
+                    soft_cls.append(clause)
+                else:
+                    clauses_to_add = []
+                    for i in range(len(b_cluster)):
+                        clause = [int(-1*eci*eci_mul),int(b_cluster[i])]
+                        for j in range(i+1,len(b_cluster)):
+                            clause.append(int(-1*b_cluster[j]))
+                        clauses_to_add.append(clause)
+                    soft_cls.extend(clauses_to_add)
+
+        print('Summation of all ecis:',all_eci_sum)
+        all_cls = hard_cls+soft_cls
+        #print('all_cls',all_cls)
+        
+        num_of_vars = sum([len(line) for line in site_specie_ids])
+        num_of_cls = len(all_cls)
+        maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(num_of_vars,num_of_cls,hard_marker)
+        for clause in all_cls:
+            maxsat_input+=(' '.join([str(lit) for lit in clause])+' 0\n')
+        f_maxsat = open('maxsat.wcnf','w')
+        f_maxsat.write(maxsat_input)
+        f_maxsat.close()
         #### Calling MAXSAT ####
-        Call_MAXSAT(solver=self.solver)
+        rand_seed = random.randint(1,100000)
+        print('Callsing MAXSAT solver. Using random seed %d.'%rand_seed)
+        os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
+        os.chdir(MAXSAT_PATH)
+        MAXSAT_CMD = './'+self.solver+' ./maxsat.wcnf'
+        if self.solver in INCOMPLETE_MAXSAT:
+            MAXSAT_CMD += ' %d %d'%(rand_seed,MAXSAT_CUTOFF)
+        MAXSAT_CMD += '> maxsat.out'
+        print(MAXSAT_CMD)
+        os.system(MAXSAT_CMD)
+        os.chdir('..')
+        os.system('cp '+MAXSAT_PATH+'maxsat.out'+' ./maxsat.out')
+        print('MAXSAT solution found!')
 
         #### Output Processing ####
-        maxsat_res = Read_MAXSAT()
+        maxsat_res = []
+        with open('./maxsat.out') as f_res:
+            lines = f_res.readlines()
+            for line in lines:
+                if line[0]=='v':
+                    maxsat_res = [int(num) for num in line.split()[1:]]
+        sorted(maxsat_res,key=lambda x:abs(x))
+
         cs_bits = get_bits(cs.supercell)
         upper_sites = []
         for s,site in enumerate(site_specie_ids):
@@ -398,40 +435,21 @@ class GScanonical(MSONable):
                     break
             if should_be_ref:
                 upper_sites.append(PeriodicSite(cs_bits[s][-1],st.frac_coords,st.lattice))
-
         upper_str = Structure.from_sites(upper_sites)
         upper_cs = self.ce.supercell_from_structure(upper_str)
         upper_corr = upper_cs.corr_from_structure(upper_str)
         upper_e = np.dot(np.array(self.eci),upper_corr)
         return upper_e,upper_str
 
-    def _solve_lower(self,mat_id):
-        """
-    As known, the energy of a periodic structure can be expressed as shown in Wenxuan's 16 paper (PRB 94.134424, 2016), formula 6a. 
-    The block is mathematically the summbation of cluster interaction terms within a supercell (periodicity) and within 
-    an environment around a supercell. The energy of the whole structure is the sum of all block energies.
-    Here we try to find the minimal block energy with LP. all variables within block are allowed to relax during parametized MAXSAT.
-    
-    block_range: the largest distance to split your clusters away. for ex,if you have a cubic supercell with 3 dimensions L*L*L 
-                 block_range = 3 means you shall only split the interactions in the block to the supercells 3* L away. This is to
-                 make sure that you don't generate too many variables for MAXSAT.
-    Warning: 1, For systems with ce.use_ewald, I currently don't have theoretically rigorous idea to correct ewald energy in blocks.
-                If I want to take the ewald energy accuratly into account, I have to extend the block to infinitly large because the
-                ewald term is infinitly ranged.
-                Currently I'm assuming that no geometric frustration appears in the LB state so I can still use the correction for 
-                upperbound. The electrostatic parts ARE NOT EXTENDED! This is not mathematically proved. One must show that all 
-                ionic structures should have no less energy per unit cell than a periodic one, for the approximation above to be 
-                rigorous.
-             2, Will try cluster tree opt later.
-    (Note: total structure energy is usually normalized with a factor N (size of supercell). Danill has already done this in pyabinitio,
-           so don't normalize again!)
-        """
 
-        clus_sup = self.ce.make_supercell(self.enumlist[mat_id])
-        blk = CEBlock(clus_sup, block_range=self.max_block_range,hard_marker=self.hard_marker,eci_mul=self.eci_mul,num_of_sclus_tosplit=self.num_split,n_iniframe=self.n_iniframe)           
+    def _solve_lower(self,mat_id):
+        #### Input Preparation ####
+
         #### Calling Gurobi ####
-        lower_e = blk.solve()
-        return lower_e
+
+        #### Output Processing ####
+        raise NotImplementedError
+
 
 ####
 # I/O interface
@@ -451,25 +469,17 @@ class GScanonical(MSONable):
             gs_socket.selec = d['selec']
         if 'solver' in d:
             gs_socket.solver = d['solver']
-        if 'hard_marker' in d:
-            gs_socket.hard_marker = d['hard_marker']
-        if 'eci_mul' in d:
-            gs_socket.eci_mul = d['eci_mul']
-        if 'num_split' in d:
-            gs_socket.num_split = d['num_split']
-        if 'n_iniframe' in d:
-            gs_socket.n_iniframe = d['n_iniframe']
         if 'e_lower' in d:
             gs_socket.e_lower=d['e_lower']        
+        if 'lastsupermat' in d:
+            gs_socket.lastsupermat=d['lastsupermat']
         if 'e_upper' in d:
             gs_socket.e_upper=d['e_upper']
-        #Only upper-bound solver gives a bit ordering
+        #Only lower-bound solver gives a bit ordering
         if 'str_upper' in d:
             gs_socket.str_upper=d['str_upper']
         if 'transmat' in d:
             gs_socket.transmat=d['transmat']
-        if 'enumlist=' in d:
-            gs_socket._enumlist=d['enumlist']
         if 'bclus_corrected' in d and 'ecis_corrected' in d and 'bit_inds' in d:
             gs_socket._bclus_corrected = d['bclus_corrected']
             gs_socket._ecis_corrected = d['ecis_corrected']
@@ -496,15 +506,10 @@ class GScanonical(MSONable):
                 'num_of_sizes':self.num_of_sizes,\
                 'selec':self.selec,\
                 'solver':self.solver,\
-                'hard_marker':self.hard_marker,\
-                'eci_mul':self.eci_mul,\
-                'num_split':self.num_split,\
-                'n_iniframe':self.n_iniframe,\
                 'e_lower':self.e_lower,\
                 'e_upper':self.e_upper,\
                 'str_upper':self.str_upper.as_dict(),\
                 'transmat':self.transmat,\
-                'enumlist':self.enumlist,\
                 'bclus_corrected':self.bclus_corrected,\
                 'ecis_corrected':self.ecis_corrected,\
                 'bit_inds':self.bit_inds,\
@@ -518,14 +523,8 @@ class GScanonical(MSONable):
             settings = {'maxsupercell':self.maxsupercell,\
                         'max_block_range':self.max_block_range,\
                         'num_of_sizes':self.num_of_sizes,\
-                        'selec':self.selec,\
-                        'enumlist':self.enumlist,\
-                        'solver':self.solver,\
-                        'hard_marker':self.hard_marker,\
-                        'eci_mul':self.eci_mul,\
-                        'num_split':self.num_split,\
-                        'n_iniframe':self.n_iniframe,\
-                       }
+                        'selec':self.selec,
+                        'solver':self.solver}
             with open(gen_settings) as fout:
                 json.dump(settings,fout)
 
@@ -534,7 +533,7 @@ class GScanonical(MSONable):
 # Canonical to Semi-grand
 ####
 
-def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson',share_enumlist=True):
+def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson'):
     """
     Here we generate all the canonical ground states for the hull in calc_data_file, and store them in gs_file.
     Output:
@@ -544,7 +543,6 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settin
         print("No valid calulations detected, can't solve GS!")
         return
 
-    # Will use existing settings to keep setting same across hull.
     if os.path.isfile(gen_settings):
         print("Using exsiting generator settings from {}.".format(gen_settings))
         with open(gen_settings) as fin:
@@ -574,20 +572,6 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settin
             gs_socket.selec=gs_settings['selec']
         if 'solver' in gs_settings:
             gs_socket.solver=gs_settings['solver']
-        if 'enumlist' in gs_settings and share_enumlist:
-            gs_socket._enumlist=gs_settings['enumlist']
-        if 'hard_marker' in d:
-            gs_socket.hard_marker = d['hard_marker']
-        if 'eci_mul' in d:
-            gs_socket.eci_mul = d['eci_mul']
-        if 'num_split' in d:
-            gs_socket.num_split = d['num_split']
-        if 'n_iniframe' in d:
-            gs_socket.n_iniframe = d['n_iniframe']
- 
-        if not os.path.isfile(gen_settings):
-            print("GS solver setting not recorded. Saving.")
-            gs_socket.write_settings()
               
         gss[compstring]={}
         gs_socket.solve()
@@ -602,8 +586,8 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settin
         for compstring in gss:
             if 'gs_energy' not in gss_old[compstring] or 'gs_energy' not in gss[compstring] or \
                     abs(gss_old[compstring]['gs_energy']-gss[compstring]['gs_energy'])>0.001:
-                _gs_converged = False
-                break
+                         _gs_converged = False
+                        break
     else:
          _gs_converged = False
 
@@ -615,7 +599,7 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settin
     return _gs_converged
 
 def writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_settings.mson'):
-    sm = StructureMatcher(ltol=0.2, stol=0.15, angle_tol=5, comparator=ElementComparator())
+    sm = StructureMatcher(ltol=0.3, stol=0.3, angle_tol=5, comparator=ElementComparator())
     
     calculated_structures = {}
     targetdirs = {}
@@ -683,10 +667,10 @@ def writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_setti
                 else:
                     strain = ((1.01,0,0),(0,1.05,0),(0,0,1.03))
             
-                write_vasp_inputs(gstruct,vaspdir,functional,num_kpoints,additional,strain)
+                _write_vasp_inputs(gstruct,vaspdir,functional,num_kpoints,additional,strain)
             else:
                 print("Using CEAuto default VASP settings.")
-                write_vasp_inputs(gstruct,vaspdir)
+                _write_vasp_inputs(gstruct,vaspdir)
 
             print('New GS written to {}.'.format(writedir))
 

@@ -27,6 +27,10 @@ from pymatgen import Structure
 from pymatgen.analysis.elasticity.strain import Deformation
 from pymatgen.core.sites import PeriodicSite
 from monty.json import MSONable
+from monty.serialization import dumpfn
+## note for dummies: dumpfn in monty.serialization will automatically convert all memebers in a dict into
+## json acceptable class. So if you see errors like: 'ndarray' not serializable in json, and can't find why,
+## just get over it and use dumpfn.
 
 from OxData import OXRange #This should be a database like file
 
@@ -123,9 +127,9 @@ class CalcAnalyzer(MSONable):
                                      stol=max_deformation['stol'], angle_tol=max_deformation['angle_tol'],\
                                      supercell_size='volume',use_ewald=True,use_inv_r=False,eta=None);
     
-            self.max_deformation = max_deformation
-
-            self._load_data()
+        #self.max_deformation = max_deformation
+        #print("Scanning vasprun for new data points.")
+        self._load_data()
 
     def fit_ce(self):
         """
@@ -186,7 +190,7 @@ class CalcAnalyzer(MSONable):
         n_matched = 0
         n_inputs = 0
         for root,dirs,files in os.walk(self.vaspdir):
-            if _is_vasp_calc(files):
+            if _is_vasp_calc(files) and (not 'accepted' in files) and (not 'failed' in files):
                 print("Loading VASP run in {}".format(root));
                 parent_root = os.path.join(*root.split(os.sep)[0:-1])
                 parent_parent_root = os.path.join(*root.split(os.sep)[0:-2])
@@ -210,6 +214,8 @@ class CalcAnalyzer(MSONable):
                         _is_unique = False
                         break
                 if not _is_unique:
+                    print("Entry {} already in calculation data file. Passing.".format(root))
+                    open(os.path.join(root,'failed'),'a').close()
                     continue
                 n_inputs += 1
     
@@ -239,6 +245,8 @@ class CalcAnalyzer(MSONable):
                 if np.abs(relaxed_struct.charge)>0.01:
                     print(relaxed_struct)
                     print("Instance {} not charge balanced .. skipping".format(root))
+                    open(os.path.join(root,'failed'),'a').close()
+                    #Add a status marker to directory.
                     continue
     
                 # Get final energy from OSZICAR or Vasprun. Vasprun is better but OSZICAR is much
@@ -248,6 +256,7 @@ class CalcAnalyzer(MSONable):
                     outcar_string = outfile.read()
                 if 'reached required accuracy' not in outcar_string:
                     print('Instance {} did not converge to required accuracy. Skipping.'.format(root))
+                    open(os.path.join(root,'failed'),'a').close()
                     continue
                 TotE=Oszicar(os.path.join(root, 'OSZICAR')).final_energy;
                 # Checking convergence
@@ -259,6 +268,7 @@ class CalcAnalyzer(MSONable):
                     self.ce.corr_from_structure(relaxed_deformed)
                 except:
                     print("Instance {} too far from lattice. Skipping.".format(root))
+                    open(os.path.join(root,'failed'),'a').close()
                     continue
     
                 new_entry = {}
@@ -280,6 +290,7 @@ class CalcAnalyzer(MSONable):
                         new_entry['axis'] = None
     
                 self.calcdata['compositions'][compstring].append(new_entry)
+                open(os.path.join(root,'accepted'),'a').close()
                 n_matched += 1
     
         # Data already deduplicated!
@@ -288,5 +299,10 @@ class CalcAnalyzer(MSONable):
     def write_files(self):
         with open(self.calc_data_file,'w') as Fout:
             json.dump(self.calcdata,Fout)
-        with open(self.ce_file,'w') as Fout:
-            json.dump(self.ECIG.as_dict(),Fout)
+        #with open(self.ce_file,'w') as Fout:
+            #d = self.ECIG.as_dict()
+            #for key,val in d.items():
+            #    print('key {} is of type {}'.format(key,type(val)))
+            #json.dump(d,Fout)
+            # For any msonable, use dumpfn to save your time!
+        dumpfn(self.ECIG,self.ce_file)    
