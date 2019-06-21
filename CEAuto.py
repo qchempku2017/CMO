@@ -122,14 +122,7 @@ if __name__ == "__main__":
 
     elif args.solveGS:
         #Solving and updating GS structures.
-        if os.path.isfile(args.gssetting):
-            print("Using existing GS solver settings from {}".format(args.gssetting))
-            gs_settings = json.load(args.gssetting)
-        else:
-            print("No GS solver setting file detected. Using default values.")
-            gs_setting = {}
-
-        solvegs_for_hull(args.cefile,args.calcdata,args.gensetting,args.gsfile,gs_setting)
+        solvegs_for_hull(args.cefile,args.calcdata,args.gssetting,args.gsfile)
         print("Writing new GS to VASP calculations.")
         writegss_to_vasprun(args.gsfile,args.vasprun,args.vaspsetting)
 

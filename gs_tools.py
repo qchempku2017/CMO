@@ -124,19 +124,9 @@ class GScanonical(MSONable):
 ####       
     def solve(self):
         if not(self.solved):
-            # Iterate upper-bound, then lower-bound. Compare tightest bounds.
-            e_upper,str_upper = self._iterate_ub()
-            e_lower = self._iterate_lb()
-            # e_upper and e_lower should be normalized to energy/prim to be compared!
-            if np.abs(e_upper-e_lower)<0.001:
-                self.e_upper, self.str_upper = (e_upper,str_upper)
-                self.e_lower = e_lower
-                self.solved = True
-                print("GS found. Energy: {} eV/prim, structure: {}".format(self.e_upper,self.e_lower))
-                return True
-            else:
-                print("GS not found. You may try to adjust GS tools settings.")
-                return False
+            self.solved = self._iterate_supercells()
+        if self.solved:
+            print("Current ground state solved. Energy: {}, structure: {}.".format(self.e_upper,self.str_upper))
     
     @property
     def enumlist(self):
@@ -151,6 +141,7 @@ class GScanonical(MSONable):
             enumrange = list(range(int(self.maxsupercell/self.num_of_sizes),self.maxsupercell+1,\
                               int(self.maxsupercell/self.num_of_sizes)))
             enumrange = [size for size in enumrange if size>min_size]
+            # Size can't be too small in case it can't host a composition ratio.
             if len(enumrange)==0:
                 print('No enumerated size acceptable. You should consider adjusting your compostion enumeration\
                        step in generator, or adjust maxsupercell to a proper value (Warning: a value >16 not \
@@ -159,7 +150,7 @@ class GScanonical(MSONable):
 
             for size in enumrange:
                 print("Enumerating for size %d"%size)
-                _enumlist.extend(Get_Hermite_Matrices(int(size/scale)))
+                _enumlist.extend(Get_Hermite_Matricies(int(size/scale)))
 
             print("Randomly picking supercell matrices.")
             self._enumlist=random.sample(_enumlist,self.selec)
@@ -168,6 +159,7 @@ class GScanonical(MSONable):
             self._enumlist=sorted(self._enumlist,key=lambda a:(abs(np.linalg.det(a)),\
                                  np.linalg.norm(a[0]),np.linalg.norm(a[1]),np.linalg.norm(a[2])))
             print("Enumerated supercells generated!")
+        #else:    print("use existing enumlist");
         return self._enumlist
     
     @property
@@ -339,14 +331,15 @@ class GScanonical(MSONable):
             #Here we will convert problems into MAXSAT and LP standard inputs, solve and analyze the outputs
             print("Solving on supercell matrix:",mat)
             cur_e_upper,cur_str_upper=self._solve_upper(mat_id)
-            cur_e_lower==self._solve_lower(mat_id)
             print("Current GS upper-bound: %f"%cur_e_upper)
+            cur_e_lower==self._solve_lower(mat_id)
             print("Current GS lower_bound: %f"%cur_e_lower)
-            if abs(self.e_lower-self.e_upper)<abs(cur_e_lower-cur_e_upper):
+            if abs(self.e_lower-self.e_upper)>abs(cur_e_lower-cur_e_upper) or \
+               (self.e_lower is None and self.e_upper is None and self.str_upper is None):
                 self.e_lower = cur_e_lower
                 self.e_upper = cur_e_upper
                 self.str_upper = cur_str_upper
-            if abs(self.e_lower-self.e_upper)<0.001:
+            if abs(self.e_lower-self.e_upper)<0.001 and self.e_lower<self.e_upper:
                 return True
         return False
 
@@ -375,8 +368,10 @@ class GScanonical(MSONable):
         """
         #### Input Preparation ####
         b_clusters_new,ecis_new,site_specie_ids=self._electrostatic_correction(mat_id)
-        sc_size = int(round(self.enumlist[mat_id]))
-        specie_names = [sublat.species_and_occu.key() for sublat in self.ce.structure]
+        sc_size = int(round(np.abs(np.linalg.det(self.enumlist[mat_id]))))
+        specie_names = [[str(sp) for sp in sublat.species_and_occu.keys()] for sublat in self.ce.structure]
+        #dict.keys() gives a special generator called 'Keyview', not list, and thus can not be indexed. 
+        #convert into list first!
         Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,conserve_comp=self.composition,\
                            sp_names=specie_names, hard_marker=self.hard_marker, eci_mul=self.eci_mul)
 
@@ -484,10 +479,8 @@ class GScanonical(MSONable):
     
     def as_dict(self):
         if not self.solved:
-            print("Your ground state has not been solved yet, solving for you.")
-            self.solved = self.solve()
-        if not self.solved:
-            print("We have tried our best but we only got these. You may want to tune your calculation parameters.")
+            print("Your ground state has not been solved yet, go back.")
+            return
         return {'cluster_expansion':self.ce.as_dict(),\
                 'ecis':self.eci,\
                 'composition':self.composition,\
@@ -512,9 +505,9 @@ class GScanonical(MSONable):
                 '@class':self.__class__.__name__\
                }
 
-    def write_settings(self,gen_settings='generator_settings.mson',use_same_setting=True):
-        if use_same_setting and not os.path.isfile(gen_settings):
-            print("Using same setting across the hull, but setting file is not written. Writing into {}".format(gen_settings))
+    def write_settings(self,gs_settings='gs_settings.mson',use_same_setting=True):
+        if use_same_setting and not os.path.isfile(gs_settings):
+            print("Using same setting across the hull, but setting file is not written. Writing into {}".format(gs_settings))
             settings = {'maxsupercell':self.maxsupercell,\
                         'max_block_range':self.max_block_range,\
                         'num_of_sizes':self.num_of_sizes,\
@@ -526,7 +519,7 @@ class GScanonical(MSONable):
                         'num_split':self.num_split,\
                         'n_iniframe':self.n_iniframe,\
                        }
-            with open(gen_settings) as fout:
+            with open(gs_settings,'w') as fout:
                 json.dump(settings,fout)
 
 
@@ -534,24 +527,17 @@ class GScanonical(MSONable):
 # Canonical to Semi-grand
 ####
 
-def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settings='generator_settings.mson',gs_file = 'gs.mson',share_enumlist=True):
+def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gs_setting_file='gs_settings.mson',gs_file = 'gs.mson',share_enumlist=True):
     """
     Here we generate all the canonical ground states for the hull in calc_data_file, and store them in gs_file.
     Output:
         A boolean variable. Indicating whether the GS has converged for hull. Currently only judging from energy.
     """
-    if not(os.path.isfile(calc_data_file)):
-        print("No valid calulations detected, can't solve GS!")
+    if not(os.path.isfile(ce_file)) or not(os.path.isfile(calc_data_file)):
+        print("No valid cluster expansion and calculation datas detected, can't solve GS!")
         return
 
     # Will use existing settings to keep setting same across hull.
-    if os.path.isfile(gen_settings):
-        print("Using exsiting generator settings from {}.".format(gen_settings))
-        with open(gen_settings) as fin:
-            gs_settings = json.load(fin)
-    else:
-        gs_settings = {}
-
     with open(calc_data_file) as calc_data:
         calcdata = json.load(calc_data)
     with open(ce_file) as ce_data:
@@ -561,8 +547,16 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settin
     ce = ClusterExpansion.from_dict(cedata['cluster_expansion'])
     gss = {}
 
-    for compstring in calcdata:
+    for compstring in calcdata['compositions']:
         composition=json.loads(compstring)
+
+        if os.path.isfile(gs_setting_file):
+            print("Using existing generator settings from {}.".format(gs_setting_file))
+            with open(gs_setting_file) as fin:
+                gs_settings = json.load(fin)
+        else:
+            gs_settings = {}
+
         gs_socket = GScanonical(ce,ecis,composition)
         if 'maxsupercell' in gs_settings:
             gs_socket.maxsupercell=gs_settings['maxsupercell']
@@ -576,20 +570,21 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gen_settin
             gs_socket.solver=gs_settings['solver']
         if 'enumlist' in gs_settings and share_enumlist:
             gs_socket._enumlist=gs_settings['enumlist']
-        if 'hard_marker' in d:
-            gs_socket.hard_marker = d['hard_marker']
-        if 'eci_mul' in d:
-            gs_socket.eci_mul = d['eci_mul']
-        if 'num_split' in d:
-            gs_socket.num_split = d['num_split']
-        if 'n_iniframe' in d:
-            gs_socket.n_iniframe = d['n_iniframe']
+        if 'hard_marker' in gs_settings:
+            gs_socket.hard_marker = gs_settings['hard_marker']
+        if 'eci_mul' in gs_settings:
+            gs_socket.eci_mul = gs_settings['eci_mul']
+        if 'num_split' in gs_settings:
+            gs_socket.num_split = gs_settings['num_split']
+        if 'n_iniframe' in gs_settings:
+            gs_socket.n_iniframe = gs_settings['n_iniframe']
  
-        if not os.path.isfile(gen_settings):
+        if not os.path.isfile(gs_setting_file):
             print("GS solver setting not recorded. Saving.")
-            gs_socket.write_settings()
+            gs_socket.write_settings(gs_setting_file)
               
         gss[compstring]={}
+        print("Solving for composition:",compstring)
         gs_socket.solve()
         if gs_socket.solved:
             gss[compstring]['gs_structure']=gs_socket.str_upper.as_dict()
@@ -633,7 +628,7 @@ def writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_setti
                     calculated_structures[compstring_old]=[]
                 calculated_structures[compstring_old].append(Poscar.from_file(os.join(root,'POSCAR').structure)) 
                 if compstring_old not in targetdirs:
-                    targetdirs[compstring_old]=root.split(os.sep)[-1]
+                    targetdirs[compstring_old]=parentdir
                 if compstring_old not in maxids:
                     maxids[compstring_old]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
     else: 
@@ -659,7 +654,7 @@ def writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_setti
                     _unique = False
                     break
         if _unique:
-            targetdir = os.path.join(vasprun,targetdirs[compstring])
+            targetdir = targetdirs[compstring]
             writedir = os.path.join(targetdir,str(maxids[compstring]+1))
             if not os.path.isdir(writedir): os.mkdir(writedir)
             Poscar(gstruct.get_sorted_structure()).write_file(os.path.join(writedir,'POSCAR'))

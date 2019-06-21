@@ -8,7 +8,7 @@ __version__ = 'Dev'
 
 import numpy as np
 from operator import mul
-from itertools import permutations,product
+from itertools import permutations,product,combinations
 from functools import partial,reduce
 import os
 
@@ -181,7 +181,7 @@ def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,sc_size=None,conserve_comp=No
         #Hard clauses to enforce sum(specie_occu)=1
 
     if conserve_comp:
-        sublat_sp_ids = [[]]*len(N_sites)
+        sublat_sp_ids = [[]]*N_sites
         
         #Marks variables on the same sublattices and are corresponding to the same specie.
         site_id = 0
@@ -193,13 +193,14 @@ def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,sc_size=None,conserve_comp=No
             site_id+=1
 
         comp_scale = int(sc_size/round(sum(conserve_comp[0].values())))
+        #print('sublat_sp_ids',sublat_sp_ids,'sp_names',sp_names)
         scaled_composition = [{sp:sublat[sp]*comp_scale for sp in sublat} for sublat in conserve_comp]
         for sl_id,sublat in enumerate(sublat_sp_ids):
             for sp_id,specie_ids in enumerate(sublat):
-                sp_name = sp_names[sl_id][sp_id] #Put in the input instrad
+                sp_name = sp_names[sl_id][sp_id] #Put in the input instead
                 hard_cls.extend([[hard_marker]+\
                                  [int(-1*b_id) for b_id in combo]+\
-                                 [int(b_id) for b_id in specie_id if b_id not in combo] \
+                                 [int(b_id) for b_id in specie_ids if b_id not in combo] \
                                  for combo in combinations(specie_ids,scaled_composition[sl_id][sp_name])])
         #Hard clauses to enforce composition consistency,scales with O(2^N). Updated Apr 12 19
     
@@ -209,7 +210,7 @@ def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,sc_size=None,conserve_comp=No
     #2016 Solver requires that all weights >=1 positive int!! when abs(eci)<1/eci_mul, cluster will be ignored!
             if eci>0:
                 clause = [int(eci*eci_mul)]
-                all_eci_sum += int(eci*eci_mul)  
+:c
         #MAXSAT 2016 series only takes in integer weights
                 for b_id in b_cluster:
                     clause.append(int(-1*b_id))
