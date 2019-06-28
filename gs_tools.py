@@ -330,9 +330,16 @@ class GScanonical(MSONable):
         for mat_id,mat in enumerate(self.enumlist):
             #Here we will convert problems into MAXSAT and LP standard inputs, solve and analyze the outputs
             print("Solving on supercell matrix:",mat)
+            sc_size  = int(round(np.abs(np.linalg.det(self.enumlist[mat_id]))))
+            compstat = sum(self.composition[0].values())
+
+            if sc_size%compstat !=0:
+                print("Supercell {} can not have composition {}. Skipping.".format(self.enumlist[mat_id],self.composition))
+                continue
+
             cur_e_upper,cur_str_upper=self._solve_upper(mat_id)
             print("Current GS upper-bound: %f"%cur_e_upper)
-            cur_e_lower==self._solve_lower(mat_id)
+            cur_e_lower=self._solve_lower(mat_id)
             print("Current GS lower_bound: %f"%cur_e_lower)
             if abs(self.e_lower-self.e_upper)>abs(cur_e_lower-cur_e_upper) or \
                (self.e_lower is None and self.e_upper is None and self.str_upper is None):
@@ -380,7 +387,10 @@ class GScanonical(MSONable):
 
         #### Output Processing ####
         maxsat_res = Read_MAXSAT()
+
+        cs = self.ce.supercell_from_matrix(self.enumlist[mat_id])
         cs_bits = get_bits(cs.supercell)
+
         upper_sites = []
         for s,site in enumerate(site_specie_ids):
             should_be_ref = True
@@ -422,8 +432,8 @@ class GScanonical(MSONable):
            so don't normalize again!)
         """
 
-        clus_sup = self.ce.make_supercell(self.enumlist[mat_id])
-        blk = CEBlock(clus_sup, block_range=self.max_block_range,hard_marker=self.hard_marker,eci_mul=self.eci_mul,num_of_sclus_tosplit=self.num_split,n_iniframe=self.n_iniframe)           
+        clus_sup = self.ce.supercell_from_matrix(self.enumlist[mat_id])
+        blk = CEBlock(clus_sup, self.eci, self.composition, block_range=self.max_block_range,hard_marker=self.hard_marker,eci_mul=self.eci_mul,num_of_sclus_tosplit=self.num_split,n_iniframe=self.n_iniframe)           
         #### Calling Gurobi ####
         lower_e = blk.solve()
         return lower_e
@@ -605,7 +615,7 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gs_setting
     with open(gs_file,'w') as gs_out:
         json.dump(gss,gs_out)
 
-    print("Solved GS structures on {} hull points.").format(len(gss))
+    print("Solved GS structures on {} hull points.".format(len(gss)))
 
     return _gs_converged
 

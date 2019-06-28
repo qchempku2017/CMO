@@ -11,6 +11,7 @@ from operator import mul
 from itertools import permutations,product,combinations
 from functools import partial,reduce
 import os
+import random
 
 ##################################
 ## General tools that will be frequently cross referenced.
@@ -180,37 +181,44 @@ def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,sc_size=None,conserve_comp=No
         hard_cls.extend([[hard_marker]+[int(-1*id_1),int(-1*id_2)] for id_1,id_2 in combinations(bit_inds[site_id],2)])
         #Hard clauses to enforce sum(specie_occu)=1
 
-    if conserve_comp:
-        sublat_sp_ids = [[]]*N_sites
+    if conserve_comp and sc_size:
         
         #Marks variables on the same sublattices and are corresponding to the same specie.
-        site_id = 0
-        while site_id<N_sites:
-            for sp,sp_id in enumerate(bit_inds[site_id]):
-                if len(sublat_sp_ids[site_id//sc_size])<len(bit_inds[site_id]):
-                    sublat_sp_ids[site_id//sc_size].append([])
-                sublat_sp_ids[site_id//sc_size][sp].append(sp_id)
-            site_id+=1
-
+        #We assume that supercell is already sorted for bit_inds.
+        #print(bit_inds)
+        sublats = [bit_inds[i*sc_size:(i+1)*sc_size] for i in range(0,N_sites//sc_size)]
+        #print(sublats)
+        bits_sp_sublat = [[[sublat[s_id][sp_id] for s_id in range(len(sublat))] \
+                            for sp_id in range(len(sublat[0]))] for sublat in sublats]        
+        
+        #print(bits_sp_sublat)
         comp_scale = int(sc_size/round(sum(conserve_comp[0].values())))
         #print('sublat_sp_ids',sublat_sp_ids,'sp_names',sp_names)
         scaled_composition = [{sp:sublat[sp]*comp_scale for sp in sublat} for sublat in conserve_comp]
-        for sl_id,sublat in enumerate(sublat_sp_ids):
+
+        print("Solving under conserved composition:",scaled_composition,"Supercell size:",sc_size)
+        #scaled_composition)
+
+        for sl_id,sublat in enumerate(bits_sp_sublat):
             for sp_id,specie_ids in enumerate(sublat):
                 sp_name = sp_names[sl_id][sp_id] #Put in the input instead
-                hard_cls.extend([[hard_marker]+\
+                for n_occu in range(sc_size+1):
+                    if n_occu != scaled_composition[sl_id][sp_name]:
+                         hard_cls.extend([[hard_marker]+\
                                  [int(-1*b_id) for b_id in combo]+\
                                  [int(b_id) for b_id in specie_ids if b_id not in combo] \
-                                 for combo in combinations(specie_ids,scaled_composition[sl_id][sp_name])])
+                                 for combo in combinations(specie_ids,n_occu)])
         #Hard clauses to enforce composition consistency,scales with O(2^N). Updated Apr 12 19
-    
+    if not sc_size:
+       print('Warning: supercell size not given. Skipping composition constraints.')   
+
     all_eci_sum = 0
     for b_cluster,eci in zip(soft_bcs, soft_ecis):
         if int(eci*eci_mul)!=0: 
     #2016 Solver requires that all weights >=1 positive int!! when abs(eci)<1/eci_mul, cluster will be ignored!
             if eci>0:
                 clause = [int(eci*eci_mul)]
-:c
+                all_eci_sum+=int(eci*eci_mul)
         #MAXSAT 2016 series only takes in integer weights
                 for b_id in b_cluster:
                     clause.append(int(-1*b_id))
@@ -221,16 +229,20 @@ def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,sc_size=None,conserve_comp=No
                 clauses_to_add = []
                 for i in range(len(b_cluster)):
                     clause = [int(-1*eci*eci_mul),int(b_cluster[i])]
+                    all_eci_sum+=int(-1*eci*eci_mul)
                     for j in range(i+1,len(b_cluster)):
                         clause.append(int(-1*b_cluster[j]))
                     clauses_to_add.append(clause)
                 soft_cls.extend(clauses_to_add)
 
-    print('Summation of all ecis:',all_eci_sum)
+    print('Soft clusters converted!')
+    if all_eci_sum > hard_marker:
+        print('Hard clauses marker might be too small. You may consider using a bigger value.')
+
     all_cls = hard_cls+soft_cls
     #print('all_cls',all_cls)
         
-    num_of_vars = sum([len(line) for line in blk.bit_inds])
+    num_of_vars = sum([len(line) for line in bit_inds])
     num_of_cls = len(all_cls)
     maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(num_of_vars,num_of_cls,hard_marker)
     for clause in all_cls:
@@ -249,8 +261,9 @@ def Call_MAXSAT(solver='ccls_akmaxsat',MAXSAT_PATH='./solvers/',MAXSAT_CUTOFF = 
     os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
     os.chdir(MAXSAT_PATH)
     MAXSAT_CMD = './'+solver+' ./maxsat.wcnf'
-    if self.solver in INCOMPLETE_MAXSAT:
+    if solver in INCOMPLETE_MAXSAT:
         MAXSAT_CMD += ' %d %d'%(rand_seed,MAXSAT_CUTOFF)
+        print("Warning: using incomplete solver. Global optimacy not guaranteed!")
     MAXSAT_CMD += '> maxsat.out'
     print(MAXSAT_CMD)
     os.system(MAXSAT_CMD)

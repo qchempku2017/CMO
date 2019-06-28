@@ -6,10 +6,21 @@ from global_tools import *
 from mc import *
 
 from pymatgen.util.coord import lattice_points_in_supercell
+from pymatgen.core.sites import PeriodicSite
+from pymatgen.analysis.ewald import EwaldSummation
 import numpy as np
+
+from itertools import product
 
 ##### Tool functions #####
 SITE_TOL = 1E-5
+def _allclose_pbc(p1,p2):
+    pbc = np.array(list(product([-1.0,0.0,1.0],[-1.0,0.0,1.0],[-1.0,0.0,1.0])))
+    for dr in pbc:
+        if np.allclose(dr,p1-p2):
+            return True
+    return False
+
 def _coord_list_mapping_blockonly(subset,superset,blkrange,atol=SITE_TOL):
     '''
        This is a revised version of coord_list_mapping_pbc in pymatgen. Here we will give a mapping of contained cluster sites
@@ -20,20 +31,29 @@ def _coord_list_mapping_blockonly(subset,superset,blkrange,atol=SITE_TOL):
        Note: This can still be improved in efficiency.
     '''
     point_inds = []
+    #print(subset)
+    #print(superset)
     for point in subset:
         disp = np.floor(point)
         x = disp[0]
         y = disp[1]
         z = disp[2]
-        if x<0 or y<0 or z<0:
-            print("Cluster {} not contained in supercell.".format(subset))
+        if point[0]<0 or point[1]<0 or point[2]<0:
+            #print("Cluster {} not contained in supercell.".format(subset))
             return None
         point_in_sc = point-disp
-        point_id_in_sc = np.where(superset==point_in_sc)[0][0]
+        #print(point_in_sc)
+
+        for p_id,p in enumerate(superset):
+            #print(p,point_in_sc,_allclose_pbc(p,point_in_sc))
+            if _allclose_pbc(p,point_in_sc):
+                point_id_in_sc=p_id
+                #print(point_id_in_sc)
+                break
         N_site = len(superset)
         point_ind = point_id_in_sc+(x*(blkrange+1)**2+y*(blkrange+1)+z)*N_site
         point_inds.append(point_ind)
-    return np.array(point_inds)
+    return np.array(point_inds,dtype=np.int64)
 
 ##### class functions
 class CEBlock(object):
@@ -64,16 +84,19 @@ class CEBlock(object):
         num_of_sclus_tosplit: This specifies how many SymmetrizedClusters are chosen for splitting. Select those with highest
                               absolute ECI values.
     '''
-    def __init__(clus_sup, eci, composition, block_range=1,hard_marker=1000000000000000,eci_mul=1000000,num_of_sclus_tosplit=10,n_iniframe=20):
+    def __init__(self, clus_sup, eci, composition, block_range=1,hard_marker=1000000000000000,eci_mul=1000000,num_of_sclus_tosplit=10,n_iniframe=20):
 
         self.cesup = clus_sup
-        self.sym_clusters = clus_sup.cluster_expansion.symmetrized_clusters
+        self.ce = clus_sup.cluster_expansion
+        self.sym_clusters = self.ce.symmetrized_clusters
+        self.clusters = self.ce.clusters
         self.eci = eci
         self.composition = composition
         sp_count = sum(self.composition[0].values())
-        self.frac_comp = [{float(sublat[sp])/sp_count for sp in sublat} for sublat in composition]
+        self.frac_comp = [{sp:(float(sublat[sp])/sp_count) for sp in sublat} for sublat in composition]
 
         self.matrix = clus_sup.supercell_matrix
+        self.prim_to_supercell = np.linalg.inv(self.matrix)
         self.Nsite = len(clus_sup.supercell)
         self.scs = int(round(np.abs(np.linalg.det(self.matrix))))
         self.prim = clus_sup.cluster_expansion.structure
@@ -82,9 +105,9 @@ class CEBlock(object):
         self.hard_marker=hard_marker
         self.eci_mul = eci_mul
         self.num_of_sclus_tosplit = num_of_sclus_tosplit
-        self.use_ewald = self.cesup.use_ewald
-        self.use_inv_r = self.cesup.use_inv_r
-        self.fcoord = clus_sup.fcoord
+        self.use_ewald = self.cesup.cluster_expansion.use_ewald
+        self.use_inv_r = self.cesup.cluster_expansion.use_inv_r
+        self.fcoords = clus_sup.fcoords
         self.n_iniframe = n_iniframe
         bit_inds_sc = []
         b_id = 1
@@ -184,10 +207,10 @@ class CEBlock(object):
         self._blkenergy = None
         self._lambda_param = None
 
-        self._splitted_bclusters = None
-        self._splitted_ecis = None        
-        self._original_bclusters = None
-        self._original_ecis = None
+        self._splitted_bclusters = []
+        self._splitted_ecis = []        
+        self._original_bclusters = []
+        self._original_ecis = []
         
 
 #### public socket ####
@@ -198,36 +221,39 @@ class CEBlock(object):
         until E converges or no new configs emerges.
         '''
         self._configs=self._initialize()
-        self._num_of_lambdas=len(self._splitted_clusters)
+        #self._num_of_lambdas=len(self._splitted_bclusters)
         while True:
             m = Model("lambda-solving")
             lambdas = m.addVars(self._num_of_lambdas,ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
-            m.addVar(vtype=GRB.CONTINUOUS,name="E")
+            E = m.addVar(vtype=GRB.CONTINUOUS,name="E")
             m.setObjective(E,GRB.MAXIMIZE)
    
             # weight of all original clusters shouldn't be less than 0. 'Hard' constraints.
             all_hard = self._set_hard_expressions(lambdas)
             for hard in all_hard:
-                m.addConstraint(hard,sense=GRB.LESS_EQUAL,rhs=1.0)
+                m.addConstr(hard,sense=GRB.LESS_EQUAL,rhs=1.0)
 
             # E = sum(J*Clus), to maximize E, use E-sum(J*clus)<=0, 'soft' constraints.
             for config in self._configs:
                 soft_expr = self._config_to_soft_expression(config,lambdas)
-                m.addConstraint(soft_expr, GRB.LESS_EQUAL, E)
+                m.addConstr(soft_expr, GRB.LESS_EQUAL, E)
             
             m.optimize()
             self._lambda_param = [v.x for v in m.getValues() if v.varName != "E"]
             blkenergy = m.objVal
-
-            maxsat_bclus,maxsat_ecis=self._form_maxsat()
-            Write_MAXSAT_input(maxsat_bclus,maxsat_ecis)
-            Call_MAXSAT()
-            new_config = Read_MAXSAT()
-
             if self._blkenergy:
                 if abs(self._blkenergy-blkenergy)<0.001:
+                    print("Lowerbound for composition {} converged.".format(self.composition))
                     break
+
+            maxsat_bclus,maxsat_ecis=self._form_maxsat()
+            self._Write_MAXSAT_input_forblk(maxsat_bclus,maxsat_ecis)
+
+            Call_MAXSAT()
+            new_config = Read_MAXSAT()[:self.num_of_vars]
+
             if new_config in self._configs:
+                print("Lowerbound for composition {} converged.".format(self.composition))
                 break
 
             self._blkenergy = blkenergy
@@ -245,6 +271,7 @@ class CEBlock(object):
         self.contained_cluster_indices = []
 
         for sc in self.sym_clusters:
+            print("Processing symmetrized cluster {}".format(sc))
             prim_fcoords = np.array([c.sites for c in sc.equivalent_clusters])
             fcoords = np.dot(prim_fcoords, self.prim_to_supercell)
             #tcoords contains all the coordinates of the symmetrically equivalent clusters
@@ -253,20 +280,20 @@ class CEBlock(object):
             tcs = tcoords.shape
             tcoords_by_clusters = tcoords.reshape(-1,tcs[2],3)
             all_inds = []
-            for cluster in tcoord_by_clusters:
+            for cluster in tcoords_by_clusters:
                 inds = _coord_list_mapping_blockonly(cluster, self.fcoords, self.blkrange,\
                        atol=SITE_TOL)
-                all_inds.append(inds)
+                if inds is not None:
+                    all_inds.append(inds)
             self.contained_cluster_indices.append((sc, np.array(all_inds)))            
             # I revised the boundary condition of pbc mapping, to give only clusters that are 'contained' in a SC, and a cluster is 
             # no longer wrapped by periodic condition.
-        
-        self._cutoff_eciabs = sorted(self.ecis,key=lambda x:abs(x))[-self.num_of_sclus_tosplit]
+        print("Clusters trimmed and mapped!")
+         
+        self._cutoff_eciabs = sorted(self.eci,key=lambda x:abs(x))[-self.num_of_sclus_tosplit]
         #bclusters with abs(eci)<_cutoff_eciabs will not be splitted.
 
-        self._original_bclusters = []
-        self._original_ecis = []
-        bit_inds = self.bit_inds_sc    
+        bit_inds = self.bit_inds_sc 
        
         for sc,sc_inds in self.contained_cluster_indices:
             for i,all_combo in enumerate(sc.bit_combos):
@@ -278,7 +305,7 @@ class CEBlock(object):
                             site_in_sc = site%self.Nsite
                             dz = (site//self.Nsite)%(self.blkrange+1)
                             dy = (site//self.Nsite)//(self.blkrange+1)%(self.blkrange+1)
-                            dx = (size//self.Nsite)//(self.blkrange+1)//(self.blkrange+1)
+                            dx = (site//self.Nsite)//(self.blkrange+1)//(self.blkrange+1)
                             bit_in_sc = bit_inds[site_in_sc][combo[s]]
                             bit = bit_in_sc+(dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
                             bclus.append(bit)
@@ -286,29 +313,34 @@ class CEBlock(object):
                     #self._original_bclusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
                     #                              for sc_ind in sc_inds])  
                     #need to map extended 'site' back, and need to do the splitting here.
-                    self._original_ecis.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
+                    eci_new = {size:[self.eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in self.clusters[size]] \
+                               for size in self.clusters}
+
+                    self._original_ecis.extend([eci_new[len(sc.bits)][sc.sc_id-self.clusters[len(sc.bits)][0].sc_id][i]\
                                                   for sc_ind in sc_inds])
 
         #### Splitting and extension. Trivial. ####
         # Mapping rule of a site indexed i in original SC to supercell:(x:+x, y:+y, z:+z)(x,y,z<=extend_range):
         # new_index = i + (x*(range+1)**2+y*(range+1)+z)*n_bits_sc
         # When range=1, a clustere would be splitted into 7 images.
+
         for bclus,eci in zip(self._original_bclusters,self._original_ecis):
             if abs(eci)>self._cutoff_eciabs:
                 for x in range(self.blkrange+1):
                     for y in range(self.blkrange+1):
                        for z in range(self.blkrange+1):
                           if x==0 and y==0 and z==0:
-                              break
+                              continue
                           bclus_xyzimage = [idx + (x*(self.blkrange+1)**2 + y*(self.blkrange+1) + z)* self.num_bits_sc for idx in bclus]
-                          self._splitted_clusters.append(bclus_xyziamge)
+                          self._splitted_bclusters.append(bclus_xyzimage)
                           self._splitted_ecis.append(eci)
 
-        self.num_of_vars = max([max(bclus) for bclus in self._splitted_clusters])
+        self.num_of_vars = max([max(bclus) for bclus in self._splitted_bclusters])
         #Max image bit index
+        #Must extend len(bit_inds) to self.num_of_vars. This is required by MAXSAT solvers.                    
 
         print("Initializing 20 frames with lowest CE-MC energy!")
-        self._num_of_lambdas = len(self._splitted_clusters)
+        self._num_of_lambdas = len(self._splitted_bclusters)
         #preparing MC
         
         sites_WorthToExpand = []
@@ -323,16 +355,19 @@ class CEBlock(object):
 
         order = OrderDisorderedStructureTransformation(algo=2)
         randSites = []
-        for i,site in enumerate(Prim):
-             randSite = PeriodicSite(RO[i],site.frac_coords,Prim.lattice,properties=site.properties)
+        for i,site in enumerate(self.prim):
+             randSite = PeriodicSite(self.frac_comp[i],site.frac_coords,self.prim.lattice,properties=site.properties)
              randSites.append(randSite)
         randStr = Structure.from_sites(randSites)
+        randStr.make_supercell(self.matrix)
         randStr = order.apply_transformation(randStr)
-        init_occu = clus_sup.occu_from_structure(randStr)
+        init_occu = self.cesup.occu_from_structure(randStr)
+        print(randStr)
 
-        base_occu  = simulated_anneal(ecis=self.ecis, cluster_supercell=clus_sup,occu=init_occu,ind_groups=indGrps,n_loops=200000, init_T=5100, final_T=100,n_steps=20)
+        base_occu  = simulated_anneal(ecis=self.eci, cluster_supercell=self.cesup,occu=init_occu,ind_groups=indGrps,n_loops=20000, init_T=5100, final_T=100,n_steps=20)
         # Sampling run
-        occu, min_occu, min_e, rand_occu = run_T(ecis=self.ecis, cluster_supercell=clus_sup, occu=deepcopy(base_occu),T=100,n_loops=200000, ind_groups = indGrps, n_rand=self.n_iniframe, check_unque=True)       
+        print("Sampling.")
+        occu, min_occu, min_e, rand_occu = run_T(ecis=self.eci, cluster_supercell=self.cesup, occu=deepcopy(base_occu),T=100,n_loops=100000, ind_groups = indGrps, n_rand=self.n_iniframe, check_unique=True)       
 
         iniconfigs = [self._scoccu_to_blkconfig(rand) for rand, rand_e in rand_occu]
         return iniconfigs
@@ -342,9 +377,9 @@ class CEBlock(object):
         Here we transfrom an occupation list generated by monte-carlo program into a block confirugration in MAXSAT output format, as
         we store them in self._configs.
         '''
-        config=list(range(1,self.num_of_vars+1))
+        base_config=list(range(1,self.num_of_vars+1))
         config=[-v for v in base_config]
-        for s_id,sp_id in occu:
+        for s_id,sp_id in enumerate(occu):
             if sp_id >= len(self.bit_inds_sc[s_id]):
                 var =  self.bit_inds_sc[s_id][-1]
             else:
@@ -366,15 +401,15 @@ class CEBlock(object):
         o_clusfuncs,s_clusfuncs,e_clusfuncs=self._config_to_clusfuncs(config)
         soft_expr = LinExpr()
         for i,clusfunc in enumerate(s_clusfuncs):
-            soft_expr+=clusfunc*self._splitted_ecis[i]*lambdas[i]
+            soft_expr.add(clusfunc*self._splitted_ecis[i]*lambdas[i])
         for i,clusfunc in enumerate(e_clusfuncs):
-            soft_expr+=clusfunc*self._ewald_ecis[i]
+            soft_expr.add(clusfunc*self._ewald_ecis[i])
         for i,clusfunc in enumerate(o_clusfuncs):
             extended_ids = list( range(i*(self.blkrange+1)**3+1, (i+1)*(self.blkrange+1)**3) )
             hard_expr = LinExpr()
             for e_id in extended_ids:
-                hard_expr += lambdas[e_id]
-            soft_expr += clusfunc*self._original_ecis[i]*(1-hard_expr)
+                hard_expr.add(lambdas[e_id])
+            soft_expr.add(clusfunc*self._original_ecis[i]*(1-hard_expr))
         return soft_expr
 
     def _config_to_clusfuncs(self,config):
@@ -393,7 +428,7 @@ class CEBlock(object):
              extended_ids = list( range(id0*(self.blkrange+1)**3+1, (id0+1)*(self.blkrange+1)**3) )
              hard_expr = LinExpr()
              for e_id in extended_ids:
-                 hard_expr += lambdas[e_id]
+                 hard_expr.add(lambdas[e_id])
              all_hard_exprs.append(hard_expr)
         return all_hard_exprs
  
@@ -430,3 +465,64 @@ class CEBlock(object):
                     maxsat_ecis.append(eci*2)
 
         return maxsat_bclusters,maxsat_ecis
+
+    def _Write_MAXSAT_input_forblk(self,soft_bcs,soft_ecis):
+        print('Preparing MAXSAT input file.')
+        soft_cls = []
+        hard_cls = []
+        max_sc_num = (self.num_of_vars-1)//self.num_bits_sc
+        max_site_num = (max_sc_num+1)*self.Nsite-1
+        max_bit = -1
+    
+        for site_id in range(max_site_num+1):
+            dz = (site_id//self.Nsite)%(self.blkrange+1)
+            dy = (site_id//self.Nsite)//(self.blkrange+1)%(self.blkrange+1)
+            dx = (site_id//self.Nsite)//(self.blkrange+1)//(self.blkrange+1)
+            site_in_sc = site_id % self.Nsite
+            for id_1,id_2 in combinations(bit_inds[site_in_sc],2):
+                id1_img = id_1 + (dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
+                id2_img = id_2 +(dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
+                # Maximum bit appeared in hard clauses.
+                max_bit = max(max_bit,id1_img,id2_img)
+                hard_cls.append([self.hard_marker]+[int(-1*id1_img),int(-1*id2_img)])
+            #Hard clauses to enforce sum(specie_occu)=1
+       
+        all_eci_sum = 0
+        for b_cluster,eci in zip(soft_bcs, soft_ecis):
+            if int(eci*self.eci_mul)!=0: 
+        #2016 Solver requires that all weights >=1 positive int!! when abs(eci)<1/eci_mul, cluster will be ignored!
+                if eci>0:
+                    clause = [int(eci*self.eci_mul)]
+                    all_eci_sum+=int(eci*self.eci_mul)
+            #MAXSAT 2016 series only takes in integer weights
+                    for b_id in b_cluster:
+                        clause.append(int(-1*b_id))
+        #Don't worry about the last specie for a site. It is take as a referecne specie, 
+        #thus not counted into nbits and combos at all!!!
+                    soft_cls.append(clause)
+                else:
+                    clauses_to_add = []
+                    for i in range(len(b_cluster)):
+                        clause = [int(-1*eci*self.eci_mul),int(b_cluster[i])]
+                        all_eci_sum+=int(-1*eci*eci_mul)
+                        for j in range(i+1,len(b_cluster)):
+                            clause.append(int(-1*b_cluster[j]))
+                        clauses_to_add.append(clause)
+                    soft_cls.extend(clauses_to_add)
+    
+        print('Soft clusters converted!')
+        if all_eci_sum > self.hard_marker:
+            print('Hard clauses marker might be too small. You may consider using a bigger value.')
+    
+        all_cls = hard_cls+soft_cls
+        #print('all_cls',all_cls)
+            
+        num_of_vars = max_bit
+        num_of_cls = len(all_cls)
+        maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(num_of_vars,num_of_cls,hard_marker)
+        for clause in all_cls:
+            maxsat_input+=(' '.join([str(lit) for lit in clause])+' 0\n')
+        f_maxsat = open('maxsat.wcnf','w')
+        f_maxsat.write(maxsat_input)
+        f_maxsat.close()
+        print('maxsat.wcnf written.')
