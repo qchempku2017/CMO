@@ -11,7 +11,6 @@ from operator import mul
 from itertools import permutations,product,combinations
 from functools import partial,reduce
 import os
-import random
 
 ##################################
 ## General tools that will be frequently cross referenced.
@@ -252,18 +251,18 @@ def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,sc_size=None,conserve_comp=No
     f_maxsat.close()
     print('maxsat.wcnf written.')
 
-def Call_MAXSAT(solver='ccls_akmaxsat',MAXSAT_PATH='./solvers/',MAXSAT_CUTOFF = 600):
-    COMPLETE_MAXSAT = ['akmaxsat','ccls_akmaxsat']
-    INCOMPLETE_MAXSAT = ['CCLS2015']
+def Call_MAXSAT(solver='CCEHC-incomplete',MAXSAT_PATH='./solvers/',MAXSAT_CUTOFF = 200):
+    COMPLETE_MAXSAT = ['CCEHC_to_akmaxsat','ccls_akmaxsat']
+    INCOMPLETE_MAXSAT = ['CCLS-incomplete','CCEHC-incomplete']
 
-    rand_seed = random.randint(1,100000)
-    print('Callsing MAXSAT solver. Using random seed %d.'%rand_seed)
+    print('Callsing MAXSAT solver.')
     os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
     os.chdir(MAXSAT_PATH)
     MAXSAT_CMD = './'+solver+' ./maxsat.wcnf'
     if solver in INCOMPLETE_MAXSAT:
-        MAXSAT_CMD += ' %d %d'%(rand_seed,MAXSAT_CUTOFF)
         print("Warning: using incomplete solver. Global optimacy not guaranteed!")
+    if solver in COMPLETE_MAXSAT:
+        print("Warning: using complete solver. Time cost might be intractable. Good luck!")
     MAXSAT_CMD += '> maxsat.out'
     print(MAXSAT_CMD)
     os.system(MAXSAT_CMD)

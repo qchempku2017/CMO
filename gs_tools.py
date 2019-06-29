@@ -61,7 +61,7 @@ class GScanonical(MSONable):
 
     def __init__(self, ce, eci, composition, transmat=[[1,0,0],[0,1,0],[0,0,1]],maxsupercell=16, \
                  max_block_range = 1,num_of_sizes=4, selec=20, hard_marker=1000000000000000, \
-                 eci_mul=1000000,solver='ccls_akmaxsat',\
+                 eci_mul=1000000,solver='CCEHC-incomplete',\
                  num_split=10,n_iniframe=20):
         """
         Args:
@@ -73,7 +73,8 @@ class GScanonical(MSONable):
             num_of_sizes: number of supercell sizes to be enumerated. When num_of_sizes = 4 while maxsupercell = 16,
                           enumerated sizes are [4,8,12,16]
             selec: number of enumerated supercell matrices to select.
-            solver: the MAXSAT solver used to solve the upper bound problem. Default: ccls_akmaxsat.
+            solver: the MAXSAT solver used to solve the upper bound problem. Default: CCEHC-incomplete.
+                    (We use incomplete solvers to make the time consumption tractable for MAXSAT)
             hard_marker: the marking number of hard clauses in MAXSAT. Should be sufficiently large (>sum(ECI)).
             eci_mul: since many MAXSAT only take integer weights, we multiply and floor ECI's with this to make integers.
             num_split: number of Symmetrized clusters to split. When num_split = 10, only sc's with top 10 ECI absolute values will be splitted.

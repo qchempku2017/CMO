@@ -369,6 +369,7 @@ class CEBlock(object):
         print("Sampling.")
         occu, min_occu, min_e, rand_occu = run_T(ecis=self.eci, cluster_supercell=self.cesup, occu=deepcopy(base_occu),T=100,n_loops=100000, ind_groups = indGrps, n_rand=self.n_iniframe, check_unique=True)       
 
+        #print(rand_occu)
         iniconfigs = [self._scoccu_to_blkconfig(rand) for rand, rand_e in rand_occu]
         return iniconfigs
     
@@ -380,6 +381,8 @@ class CEBlock(object):
         base_config=list(range(1,self.num_of_vars+1))
         config=[-v for v in base_config]
         for s_id,sp_id in enumerate(occu):
+            print(occu)
+            print(self.bit_inds_sc)
             if sp_id >= len(self.bit_inds_sc[s_id]):
                 var =  self.bit_inds_sc[s_id][-1]
             else:
