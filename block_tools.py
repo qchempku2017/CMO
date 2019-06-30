@@ -111,14 +111,16 @@ class CEBlock(object):
         self.n_iniframe = n_iniframe
         bit_inds_sc = []
         b_id = 1
+        #print(clus_sup.supercell)
         for i,site in enumerate(clus_sup.supercell):
             site_bit_inds = []
             for specie_id in range(len(site.species_and_occu)-1):
             #-1 since a specie on the site is taken as reference
                 site_bit_inds.append(b_id)
                 b_id+=1
-                bit_inds_sc.append(site_bit_inds)
+            bit_inds_sc.append(site_bit_inds)
         self.bit_inds_sc = bit_inds_sc
+        #print(bit_inds_sc)
         self.num_bits_sc = b_id-1
 
         #later we have anther variable self.bit_inds
@@ -323,9 +325,14 @@ class CEBlock(object):
         # Mapping rule of a site indexed i in original SC to supercell:(x:+x, y:+y, z:+z)(x,y,z<=extend_range):
         # new_index = i + (x*(range+1)**2+y*(range+1)+z)*n_bits_sc
         # When range=1, a clustere would be splitted into 7 images.
-
-        for bclus,eci in zip(self._original_bclusters,self._original_ecis):
-            if abs(eci)>self._cutoff_eciabs:
+        
+        self._splitted_ori_id = []
+        # id of splitted clusters in self._original_bclusters. This is important because not 
+        #all clusters are splitted
+        self._n_split = (self.blkrange+1)**3-1
+        # How many images will one original cluster be splitted into.
+        for i,(bclus,eci) in enumerate(zip(self._original_bclusters,self._original_ecis)):
+            if abs(eci)>=self._cutoff_eciabs:
                 for x in range(self.blkrange+1):
                     for y in range(self.blkrange+1):
                        for z in range(self.blkrange+1):
@@ -334,13 +341,19 @@ class CEBlock(object):
                           bclus_xyzimage = [idx + (x*(self.blkrange+1)**2 + y*(self.blkrange+1) + z)* self.num_bits_sc for idx in bclus]
                           self._splitted_bclusters.append(bclus_xyzimage)
                           self._splitted_ecis.append(eci)
+                self._splitted_ori_id.append(i)
 
         self.num_of_vars = max([max(bclus) for bclus in self._splitted_bclusters])
+        self._num_of_lambdas = len(self._splitted_bclusters)
+        #Checking splitting correctness
+        if self._n_split*len(self._splitted_ori_id)!=self._num_of_lambdas:
+            print('Splitting pattern wrong. Exiting!')
+            return
+
         #Max image bit index
         #Must extend len(bit_inds) to self.num_of_vars. This is required by MAXSAT solvers.                    
 
         print("Initializing 20 frames with lowest CE-MC energy!")
-        self._num_of_lambdas = len(self._splitted_bclusters)
         #preparing MC
         
         sites_WorthToExpand = []
@@ -362,7 +375,7 @@ class CEBlock(object):
         randStr.make_supercell(self.matrix)
         randStr = order.apply_transformation(randStr)
         init_occu = self.cesup.occu_from_structure(randStr)
-        print(randStr)
+        #print(randStr)
 
         base_occu  = simulated_anneal(ecis=self.eci, cluster_supercell=self.cesup,occu=init_occu,ind_groups=indGrps,n_loops=20000, init_T=5100, final_T=100,n_steps=20)
         # Sampling run
@@ -381,18 +394,19 @@ class CEBlock(object):
         base_config=list(range(1,self.num_of_vars+1))
         config=[-v for v in base_config]
         for s_id,sp_id in enumerate(occu):
-            print(occu)
-            print(self.bit_inds_sc)
-            if sp_id >= len(self.bit_inds_sc[s_id]):
-                var =  self.bit_inds_sc[s_id][-1]
-            else:
-                var = self.bit_inds_sc[s_id][sp_id]
-            for dx in range(self.blkrange+1):
-                for dy in range(self.blkrange+1):
-                    for dz in range(self.blkrange+1):
-                        occupied_id = var-1+(dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
-                        if occupied_id < self.num_of_vars:
-                            config[occupied_id]=-1*config[occupied_id]
+            #print(occu)
+            #print(self.bit_inds_sc) bit_inds_sc is wrong!
+            if sp_id < len(self.bit_inds_sc[s_id]):
+                var =  self.bit_inds_sc[s_id][sp_id]
+            # the last specie is ignored.
+            # else:
+            #    var = self.bit_inds_sc[s_id][sp_id]
+                for dx in range(self.blkrange+1):
+                    for dy in range(self.blkrange+1):
+                        for dz in range(self.blkrange+1):
+                            occupied_id = var-1+(dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
+                            if occupied_id < self.num_of_vars:
+                                config[occupied_id]=-1*config[occupied_id]
         return config
                
     def _config_to_soft_expression(self,config,lambdas):
@@ -408,11 +422,18 @@ class CEBlock(object):
         for i,clusfunc in enumerate(e_clusfuncs):
             soft_expr.add(clusfunc*self._ewald_ecis[i])
         for i,clusfunc in enumerate(o_clusfuncs):
-            extended_ids = list( range(i*(self.blkrange+1)**3+1, (i+1)*(self.blkrange+1)**3) )
-            hard_expr = LinExpr()
-            for e_id in extended_ids:
-                hard_expr.add(lambdas[e_id])
-            soft_expr.add(clusfunc*self._original_ecis[i]*(1-hard_expr))
+            # When this cluster is a splitted.
+            if i in self._splitted_ori_id:
+                pos = self._splitted_ori_id.index(i)
+                extended_ids = list(range(pos*self._n_split,(pos+1)*self._n_split))
+                hard_expr = LinExpr()
+                for e_id in extended_ids:
+                    hard_expr.add(lambdas[e_id])
+                soft_expr.add(clusfunc*self._original_ecis[i]*(1-hard_expr))
+            # When this cluster is not splitted.
+            else:
+                soft_expr.add(clusfunc*self._original_ecis[i])
+
         return soft_expr
 
     def _config_to_clusfuncs(self,config):
@@ -427,12 +448,14 @@ class CEBlock(object):
 
     def _set_hard_expressions(self,lambdas):
         all_hard_exprs = []
-        for id0,(bclus,eci) in enumerate(zip(self._original_bclus,self._original_ecis)):
-             extended_ids = list( range(id0*(self.blkrange+1)**3+1, (id0+1)*(self.blkrange+1)**3) )
-             hard_expr = LinExpr()
-             for e_id in extended_ids:
-                 hard_expr.add(lambdas[e_id])
-             all_hard_exprs.append(hard_expr)
+        for id0,(bclus,eci) in enumerate(zip(self._original_bclusters,self._original_ecis)):
+            if id0 in self._splitted_ori_id:
+                pos = self._splitted_ori_id.index(id0)
+                extended_ids = list(range(pos*self._n_split,(pos+1)*self._n_split))
+                hard_expr = LinExpr()
+                for e_id in extended_ids:
+                    hard_expr.add(lambdas[e_id])
+                all_hard_exprs.append(hard_expr)
         return all_hard_exprs
  
     def _form_maxsat(self):
@@ -443,16 +466,20 @@ class CEBlock(object):
         maxsat_ecis = []
         for id0,(bclus,eci) in enumerate(zip(self._original_bclusters,self._original_ecis)):
             maxsat_bclusters.append(bclus)
-            extended_ids = list( range(id0*(self.blkrange+1)**3+1, (id0+1)*(self.blkrange+1)**3) )
+            if id0 in self._splitted_ori_id:
+                pos = self._splitted_ori_id.index(id0)
+                extended_ids = list(range(pos*self._n_split,(pos+1)*self._n_split))
             # id of bclustet's images in neighboring supercells.
-            splitted_sum = 0
-            for ext_id in extended_ids:
-                splitted_sum+=self._splitted_ecis[ext_id]
-            maxsat_ecis.append(1-splitted_sum)
+                splitted_sum = 0
+                for ext_id in extended_ids:
+                    splitted_sum+=self._lambda_param[ext_id]
+                maxsat_ecis.append((1-splitted_sum)*eci)
+                for ext_id in extended_ids:
+                    maxsat_bclusters.append(self._splitted_bclusters[ext_id])
+                    maxsat_ecis.append(self._splitted_ecis[ext_id]*self._lambda_param[ext_id])
+            else:
+                maxsat_ecis.append(eci)
             # Please, please do not merge the two cycles! Or you will breaking the corresponding relation between bclus and eci!
-            for ext_id in extended_ids:
-                maxsat_bclusters.append(self._splitted_bclusters[ext_id])
-                maxsat_ecis.append(self._splitted_ecis[ext_id])
 
         for bclus_ew,eci in zip(self._ewald_bclusters,self._ewald_ecis):
             _in_b_clusters = False
@@ -466,7 +493,6 @@ class CEBlock(object):
                 if not _in_b_clusters:
                     maxsat_bclusters.append(bclus_ew)
                     maxsat_ecis.append(eci*2)
-
         return maxsat_bclusters,maxsat_ecis
 
     def _Write_MAXSAT_input_forblk(self,soft_bcs,soft_ecis):
