@@ -342,8 +342,8 @@ class GScanonical(MSONable):
             print("Current GS upper-bound: %f"%cur_e_upper)
             cur_e_lower=self._solve_lower(mat_id)
             print("Current GS lower_bound: %f"%cur_e_lower)
-            if abs(self.e_lower-self.e_upper)>abs(cur_e_lower-cur_e_upper) or \
-               (self.e_lower is None and self.e_upper is None and self.str_upper is None):
+            if (self.e_lower is None and self.e_upper is None and self.str_upper is None) \
+                or abs(self.e_lower-self.e_upper)>abs(cur_e_lower-cur_e_upper) :
                 self.e_lower = cur_e_lower
                 self.e_upper = cur_e_upper
                 self.str_upper = cur_str_upper
