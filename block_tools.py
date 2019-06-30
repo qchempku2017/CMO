@@ -223,6 +223,11 @@ class CEBlock(object):
         until E converges or no new configs emerges.
         '''
         self._configs=self._initialize()
+        #print("Original:",self._original_bclusters)
+        #print("Original num:",len(self._original_bclusters))
+        #print("Those Splitted:",self._splitted_ori_id)
+        #print("num splitted:",len(self._splitted_ori_id))
+        #print("num of lambdas:",self._num_of_lambdas)
         #self._num_of_lambdas=len(self._splitted_bclusters)
         while True:
             m = Model("lambda-solving")
@@ -232,16 +237,19 @@ class CEBlock(object):
    
             # weight of all original clusters shouldn't be less than 0. 'Hard' constraints.
             all_hard = self._set_hard_expressions(lambdas)
+            #print("Lambdas:",self._num_of_lambdas)
             for hard in all_hard:
+                print("Hard:\n",hard)
                 m.addConstr(hard,sense=GRB.LESS_EQUAL,rhs=1.0)
 
             # E = sum(J*Clus), to maximize E, use E-sum(J*clus)<=0, 'soft' constraints.
             for config in self._configs:
                 soft_expr = self._config_to_soft_expression(config,lambdas)
+                print("Soft:\n",soft_expr)
                 m.addConstr(soft_expr, GRB.LESS_EQUAL, E)
             
             m.optimize()
-            self._lambda_param = [v.x for v in m.getValues() if v.varName != "E"]
+            self._lambda_param = [v.x for v in m.getVars() if v.varName != "E"]
             blkenergy = m.objVal
             if self._blkenergy:
                 if abs(self._blkenergy-blkenergy)<0.001:
@@ -292,7 +300,8 @@ class CEBlock(object):
             # no longer wrapped by periodic condition.
         print("Clusters trimmed and mapped!")
          
-        self._cutoff_eciabs = sorted(self.eci,key=lambda x:abs(x))[-self.num_of_sclus_tosplit]
+        self._cutoff_eciabs = abs(sorted(self.eci,key=lambda x:abs(x))[-self.num_of_sclus_tosplit])
+        print("cutoff |eci|:",self._cutoff_eciabs)
         #bclusters with abs(eci)<_cutoff_eciabs will not be splitted.
 
         bit_inds = self.bit_inds_sc 
