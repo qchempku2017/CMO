@@ -379,9 +379,11 @@ class GScanonical(MSONable):
         #print(site_specie_ids)
 
         sc_size = int(round(np.abs(np.linalg.det(self.enumlist[mat_id]))))
-        specie_names = [[str(sp) for sp in sublat.species_and_occu.keys()] for sublat in self.ce.structure]
+        specie_names = [[str(sp) for sp in sorted(sublat.species_and_occu.keys())] for sublat in self.ce.structure]
         #dict.keys() gives a special generator called 'Keyview', not list, and thus can not be indexed. 
         #convert into list first!
+
+        # For the sake of god, please use sorted keys. Don't mess up with yourself!
         Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,conserve_comp=self.composition,\
                            sp_names=specie_names, hard_marker=self.hard_marker, eci_mul=self.eci_mul)
 
