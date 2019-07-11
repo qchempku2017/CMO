@@ -34,6 +34,10 @@ For number of hard clauses issue, we firstly try to reduce the problem size
 down to 16 sites.(for UB)
 """
 """
+A temporary ver that only provides UB convergence. Debugging LB.
+"""
+
+"""
 Notes:
     In this version I separated LB interation and UB iteration.
     UB based on supercell, LB based on block.
@@ -338,17 +342,28 @@ class GScanonical(MSONable):
                 print("Supercell {} can not have composition {}. Skipping.".format(self.enumlist[mat_id],self.composition))
                 continue
 
+            #print("Warning: Solving UB only.")
+            #try:
             cur_e_upper,cur_str_upper=self._solve_upper(mat_id)
             print("Current GS upper-bound: %f"%cur_e_upper)
             cur_e_lower=self._solve_lower(mat_id)
             print("Current GS lower_bound: %f"%cur_e_lower)
-            if (self.e_lower is None and self.e_upper is None and self.str_upper is None) \
-                or abs(self.e_lower-self.e_upper)>abs(cur_e_lower-cur_e_upper) :
-                self.e_lower = cur_e_lower
+            if (self.e_upper is None and self.e_lower is None) or abs(self.e_upper-self.e_lower)>abs(cur_e_upper-cur_e_lower):
+                #self.e_lower = cur_e_lower
+                old_e_upper = self.e_upper
+                old_e_lower = self.e_lower
                 self.e_upper = cur_e_upper
+                self.e_lower = cur_e_lower
                 self.str_upper = cur_str_upper
-            if abs(self.e_lower-self.e_upper)<0.001 and self.e_lower<self.e_upper:
-                return True
+                if not(old_e_upper is None) and not(old_e_lower is None) and abs(self.e_upper-self.e_lower)<0.001:
+                    print('UB and LB converged on matrix:',mat)
+                    return True
+            #except:
+            #    cur_e_upper=None
+            #    cur_str_upper=None
+            #    print("Current GS upper-bound not found! Skipping")
+            
+
         return False
 
     def _electrostatic_correction(self,mat_id):
@@ -382,8 +397,6 @@ class GScanonical(MSONable):
         specie_names = [[str(sp) for sp in sorted(sublat.species_and_occu.keys())] for sublat in self.ce.structure]
         #dict.keys() gives a special generator called 'Keyview', not list, and thus can not be indexed. 
         #convert into list first!
-
-        # For the sake of god, please use sorted keys. Don't mess up with yourself!
         Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,conserve_comp=self.composition,\
                            sp_names=specie_names, hard_marker=self.hard_marker, eci_mul=self.eci_mul)
 
@@ -392,11 +405,14 @@ class GScanonical(MSONable):
 
         #### Output Processing ####
         maxsat_res = Read_MAXSAT()
+        if len(maxsat_res)==0:
+            print("Error:Solution not found for supercell {}!".format(self.enumlist[mat_id]))
 
         cs = self.ce.supercell_from_matrix(self.enumlist[mat_id])
         cs_bits = get_bits(cs.supercell)
 
         upper_sites = []
+        print(site_specie_ids)
         for s,site in enumerate(site_specie_ids):
             should_be_ref = True
             st = cs.supercell[s]
@@ -410,8 +426,9 @@ class GScanonical(MSONable):
                 upper_sites.append(PeriodicSite(cs_bits[s][-1],st.frac_coords,st.lattice))
 
         upper_str = Structure.from_sites(upper_sites)
-        upper_cs = self.ce.supercell_from_structure(upper_str)
-        upper_corr = upper_cs.corr_from_structure(upper_str)
+        #print("UB structure:",upper_str)
+        #upper_cs = self.ce.supercell_from_structure(upper_str)
+        upper_corr = cs.corr_from_structure(upper_str)
         upper_e = np.dot(np.array(self.eci),upper_corr)
         return upper_e,upper_str
 
@@ -601,9 +618,10 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gs_setting
         gss[compstring]={}
         print("Solving for composition:",compstring)
         gs_socket.solve()
-        if gs_socket.solved:
-            gss[compstring]['gs_structure']=gs_socket.str_upper.as_dict()
-            gss[compstring]['gs_energy']=gs_socket.e_upper
+        #if gs_socket.solved:
+        gss[compstring]['gs_structure']=gs_socket.str_upper.as_dict()
+        gss[compstring]['gs_energy']=gs_socket.e_upper
+        gss[compstring]['solved']=gs_socket.solved
 
     if os.path.isfile(gs_file):
         with open(gs_file) as gs_in:
