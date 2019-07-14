@@ -364,7 +364,8 @@ class CEBlock(object):
 
         #Max image bit index
         #Must extend len(bit_inds) to self.num_of_vars. This is required by MAXSAT solvers.                    
-
+        print("Ori:",self._original_bclusters)
+        print("splt:",self._splitted_bclusters)
         print("Initializing 20 frames with lowest CE-MC energy!")
         #preparing MC
         
