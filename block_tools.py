@@ -233,7 +233,7 @@ class CEBlock(object):
         while True:
             m = Model("lambda-solving")
             lambdas = m.addVars(self._num_of_lambdas,ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
-            E = m.addVar(vtype=GRB.CONTINUOUS,name="E")
+            E = m.addVar(vtype=GRB.CONTINUOUS,name="E",lb=-GRB.INFINITY, ub=GRB.INFINITY)
             m.setObjective(E,GRB.MAXIMIZE)
    
             # weight of all original clusters shouldn't be less than 0. 'Hard' constraints.
@@ -325,11 +325,13 @@ class CEBlock(object):
                     #self._original_bclusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
                     #                              for sc_ind in sc_inds])  
                     #need to map extended 'site' back, and need to do the splitting here.
-                    eci_new = {size:[self.eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in self.clusters[size]] \
+                    #Remember the structure of danill's eci array? The first term should be zero clus.
+                    eci_new = {size:[self.eci[(sc.sc_b_id):(sc.sc_b_id+len(sc.bit_combos))] for sc in self.clusters[size]] \
                                for size in self.clusters}
 
                     self._original_ecis.extend([eci_new[len(sc.bits)][sc.sc_id-self.clusters[len(sc.bits)][0].sc_id][i]\
                                                   for sc_ind in sc_inds])
+        self._zero_eci = self.eci[0]
 
         #### Splitting and extension. Trivial. ####
         # Mapping rule of a site indexed i in original SC to supercell:(x:+x, y:+y, z:+z)(x,y,z<=extend_range):
@@ -353,7 +355,23 @@ class CEBlock(object):
                           self._splitted_ecis.append(eci)
                 self._splitted_ori_id.append(i)
 
-        self.num_of_vars = max([max(bclus) for bclus in self._splitted_bclusters])
+        # self.num_of_vars = max([max(bclus) for bclus in self._splitted_bclusters])
+        # No! Things are not that simple, when you consider sum(s)=1 constraint for a site!
+        max_bit = max([max(bclus) for bclus in self._splitted_bclusters])
+        max_bit_orimage = max_bit%self.num_bits_sc
+        for s, site in enumerate(self.bit_inds_sc):
+            if max_bit_orimage in site:
+                max_site_orimage = s
+                break
+        z = max_bit//self.num_bits_sc%(self.blkrange+1)
+        y = max_bit//self.num_bits_sc//(self.blkrange+1)%(self.blkrange+1)
+        x = max_bit//self.num_bits_sc//(self.blkrange+1)//(self.blkrange+1)
+        max_site = max_site_orimage+(x*(self.blkrange+1)**2+y*(self.blkrange+1)+z)*self.Nsite
+        self.max_site=max_site
+        self.max_bit = max_bit
+        self.num_of_vars = max(self.bit_inds_sc[max_site_orimage])+\
+                         +(x*(self.blkrange+1)**2+y*(self.blkrange+1)+z)*self.num_bits_sc
+
         print("Number of variables:",self.num_of_vars)
 
         self._num_of_lambdas = len(self._splitted_bclusters)
@@ -364,10 +382,12 @@ class CEBlock(object):
 
         #Max image bit index
         #Must extend len(bit_inds) to self.num_of_vars. This is required by MAXSAT solvers.                    
-        print("Ori:",self._original_bclusters)
-        print("splt:",self._splitted_bclusters)
+        #print("Ori:",self._original_bclusters)
+        #print("splt:",self._splitted_bclusters)
         print("Initializing 20 frames with lowest CE-MC energy!")
-        #preparing MC
+        #preparing MC.
+        #Critical error before: initial configuration can not simply be set by replication of 
+        #sueprcell, or all lambda terms would be cancelled out!
         
         sites_WorthToExpand = []
         for sublat in self.frac_comp:
@@ -428,6 +448,7 @@ class CEBlock(object):
     #    cond += vec[2]+3*vec[3]
         o_clusfuncs,s_clusfuncs,e_clusfuncs=self._config_to_clusfuncs(config)
         soft_expr = LinExpr()
+        soft_expr.add(self._zero_eci)
         for i,clusfunc in enumerate(s_clusfuncs):
             if clusfunc!=0:
                 soft_expr.add(clusfunc*self._splitted_ecis[i]*lambdas[i])
@@ -449,7 +470,8 @@ class CEBlock(object):
                 if clusfunc!=0:
                     soft_expr.add(clusfunc*self._original_ecis[i])
 
-        return soft_expr
+        #Regularize!
+        return soft_expr/self.scs
 
     def _config_to_clusfuncs(self,config):
     # Calculate cluster functions based on configuration of the block.
@@ -518,20 +540,17 @@ class CEBlock(object):
         print('Preparing MAXSAT input file.')
         soft_cls = []
         hard_cls = []
-        max_sc_num = (self.num_of_vars-1)//self.num_bits_sc
-        max_site_num = (max_sc_num+1)*self.Nsite-1
-        max_bit = -1
-    
-        for site_id in range(max_site_num+1):
+        
+        for site_id in range(self.max_site+1):
             dz = (site_id//self.Nsite)%(self.blkrange+1)
             dy = (site_id//self.Nsite)//(self.blkrange+1)%(self.blkrange+1)
             dx = (site_id//self.Nsite)//(self.blkrange+1)//(self.blkrange+1)
             site_in_sc = site_id % self.Nsite
+            bit_inds = self.bit_inds_sc
             for id_1,id_2 in combinations(bit_inds[site_in_sc],2):
                 id1_img = id_1 + (dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
                 id2_img = id_2 +(dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
                 # Maximum bit appeared in hard clauses.
-                max_bit = max(max_bit,id1_img,id2_img)
                 hard_cls.append([self.hard_marker]+[int(-1*id1_img),int(-1*id2_img)])
             #Hard clauses to enforce sum(specie_occu)=1
        
@@ -552,7 +571,7 @@ class CEBlock(object):
                     clauses_to_add = []
                     for i in range(len(b_cluster)):
                         clause = [int(-1*eci*self.eci_mul),int(b_cluster[i])]
-                        all_eci_sum+=int(-1*eci*eci_mul)
+                        all_eci_sum+=int(-1*eci*self.eci_mul)
                         for j in range(i+1,len(b_cluster)):
                             clause.append(int(-1*b_cluster[j]))
                         clauses_to_add.append(clause)
@@ -565,9 +584,8 @@ class CEBlock(object):
         all_cls = hard_cls+soft_cls
         #print('all_cls',all_cls)
             
-        num_of_vars = max_bit
         num_of_cls = len(all_cls)
-        maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(num_of_vars,num_of_cls,hard_marker)
+        maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(self.num_of_vars,num_of_cls,self.hard_marker)
         for clause in all_cls:
             maxsat_input+=(' '.join([str(lit) for lit in clause])+' 0\n')
         f_maxsat = open('maxsat.wcnf','w')

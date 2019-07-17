@@ -201,11 +201,14 @@ class GScanonical(MSONable):
                 #Here we generate a mapping from clusters to site combos, which will be turned into clauses.
                 clusters = self.ce.clusters
                 eci = self.eci
-                eci_new = {size:[eci[(sc.sc_b_id-1):(sc.sc_b_id-1+len(sc.bit_combos))] for sc in clusters[size]] \
+                eci_new = {size:[eci[(sc.sc_b_id):(sc.sc_b_id+len(sc.bit_combos))] for sc in clusters[size]] \
                                for size in clusters}
                 b_clusters = []
                 eci_return = []
-
+                # eci array in danill's code: 
+                #eci[0] is zero cluster
+                #eci[-1] is ewald cluster
+                #sc_b_id starts from 1
                 for sc,sc_inds in clus_sup.cluster_indices:
                     for i,all_combo in enumerate(sc.bit_combos):
                         for combo in all_combo:
