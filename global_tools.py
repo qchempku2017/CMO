@@ -125,7 +125,7 @@ def RepresentsInt(s):
         return False
 
 def Reversed(pair):
-    return [pair[1],pair[0]]
+    return pair[::-1]
 
 def write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
     # This is a somewhat strange input set. Essentially the matgen input set (PBE+U), but with tigher

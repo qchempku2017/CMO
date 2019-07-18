@@ -84,13 +84,16 @@ class CEBlock(object):
         num_of_sclus_tosplit: This specifies how many SymmetrizedClusters are chosen for splitting. Select those with highest
                               absolute ECI values.
     '''
-    def __init__(self, clus_sup, eci, composition, block_range=1,hard_marker=1000000000000000,eci_mul=1000000,num_of_sclus_tosplit=10,n_iniframe=20):
+    def __init__(self, clus_sup, eci, composition, block_range=1,hard_marker=1000000000000000,eci_mul=1000000,n_iniframe=20,num_of_sclus_tosplit=10):
 
         self.cesup = clus_sup
         self.ce = clus_sup.cluster_expansion
         self.sym_clusters = self.ce.symmetrized_clusters
         self.clusters = self.ce.clusters
         self.eci = eci
+
+        self._zero_eci = self.eci[0]
+
         self.composition = composition
         sp_count = sum(self.composition[0].values())
         self.frac_comp = [{sp:(float(sublat[sp])/sp_count) for sp in sublat} for sublat in composition]
@@ -108,6 +111,7 @@ class CEBlock(object):
         self.use_ewald = self.cesup.cluster_expansion.use_ewald
         self.use_inv_r = self.cesup.cluster_expansion.use_inv_r
         self.fcoords = clus_sup.fcoords
+        print('fcoords:',self.fcoords)
         self.n_iniframe = n_iniframe
         bit_inds_sc = []
         b_id = 1
@@ -133,18 +137,21 @@ class CEBlock(object):
             supbits = get_bits(clus_sup.supercell)
             r = np.array([GetIonChg(bits[-1]) for bits in supbits])
             chg_bits = [[GetIonChg(bit)-GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
-            H_r = np.dot(H,r)
+            
                     
             b_clusters_ew = []
             eci_return_ew = []
 
             if not self.use_inv_r:
                 eci_ew = eci[-1]
+                H_mat = np.matrix(H)
+                r_mat = np.matrix(r)
+                self._zero_eci += (r_mat*H_mat*r_mat.T)[0,0]/self.scs
 
                 for i in range(len(bit_inds_sc)):
                     for j in range(i,len(bit_inds_sc)):
-                        for k in range(len(bit_inds_sc[i])-1):
-                            for l in range((k if i==j else 0),len(bit_inds_sc[j])-1):
+                        for k in range(len(bit_inds_sc[i])):
+                            for l in range((k if i==j else 0),len(bit_inds_sc[j])):
                                 if bit_inds_sc[i][k]!=bit_inds_sc[j][l]:
                                     bit_a = bit_inds_sc[i][k]
                                     bit_b = bit_inds_sc[j][l]
@@ -153,7 +160,10 @@ class CEBlock(object):
                                 else:
                                     bit = bit_inds_sc[i][k]
                                     b_clusters_ew.append([bit])
-                                    eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
+                                    q_H_r = 0
+                                    for m in range(len(bit_inds_sc)):
+                                        q_H_r += 2*chg_bits[i][k]*H[i][m]*r[m]
+                                    eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+q_H_r))
 
             else:
                 #When using inv_r, an independent ewald sum is generated for each specie-specie pair, and the sums are
@@ -176,11 +186,22 @@ class CEBlock(object):
                         sublat_sp_list.append(sp_id)
                         sp_id += 1
                     sp_list.extend([sublat_sp_list]*len(sublat))
+                
+                for m in range(len(bit_inds_sc)):
+                    for n in range(len(bit_inds_sc)):
+                        if m!=n:
+                            id_a = sp_list[m][-1]
+                            id_b = sp_list[n][-1]
+                            id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b - id_a -1
+                            self._zero_eci+=eci_ew[N_sp+id_abpair]*r[m]*H[m][n]*r[n]/self.scs
+                        else:
+                            id_bit = sp_list[m][-1]
+                            self._zero_eci+=eci_ew[id_bit]*r[m]**2*H[m][m]/self.scs
                        
                 for i in range(len(bit_inds_sc)):
                     for j in range(i,len(bit_inds_sc)):
-                        for k in range(len(bit_inds_sc[i])-1):
-                            for l in range((k if i==j else 0),len(bit_inds_sc[j])-1):
+                        for k in range(len(bit_inds_sc[i])):
+                            for l in range((k if i==j else 0),len(bit_inds_sc[j])):
                                 if bit_inds_sc[i][k]!=bit_inds_sc[j][l]:
                                     bit_a = bit_inds_sc[i][k]
                                     bit_b = bit_inds_sc[j][l]
@@ -199,7 +220,7 @@ class CEBlock(object):
                                         id_b = sp_list[m][-1] #id of the reference specie
                                         id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b -id_a -1
                                         #Calculate H_r term with weight!
-                                        point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]
+                                        point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]*eci_ew[N_sp+id_abpair]
                                     eci_return_ew.append(point_eci)
             self._ewald_bclusters = b_clusters_ew
             self._ewald_ecis = eci_return_ew
@@ -300,8 +321,9 @@ class CEBlock(object):
             # I revised the boundary condition of pbc mapping, to give only clusters that are 'contained' in a SC, and a cluster is 
             # no longer wrapped by periodic condition.
         print("Clusters trimmed and mapped!")
-         
-        self._cutoff_eciabs = abs(sorted(self.eci,key=lambda x:abs(x))[-self.num_of_sclus_tosplit])
+        
+        #Don't cutoff when multiplicity is not clear! 
+        self._cutoff_eciabs = abs(sorted(self.eci[1:-1],key=lambda x:abs(x))[-self.num_of_sclus_tosplit])
         print("cutoff |eci|:",self._cutoff_eciabs)
         #bclusters with abs(eci)<_cutoff_eciabs will not be splitted.
 
@@ -331,8 +353,7 @@ class CEBlock(object):
 
                     self._original_ecis.extend([eci_new[len(sc.bits)][sc.sc_id-self.clusters[len(sc.bits)][0].sc_id][i]\
                                                   for sc_ind in sc_inds])
-        self._zero_eci = self.eci[0]
-
+        
         #### Splitting and extension. Trivial. ####
         # Mapping rule of a site indexed i in original SC to supercell:(x:+x, y:+y, z:+z)(x,y,z<=extend_range):
         # new_index = i + (x*(range+1)**2+y*(range+1)+z)*n_bits_sc
@@ -417,6 +438,9 @@ class CEBlock(object):
 
         #print(rand_occu)
         iniconfigs = [self._scoccu_to_blkconfig(rand) for rand, rand_e in rand_occu]
+        print('Ewald clusters:',self._ewald_bclusters)
+        print('Original clusters:',self._original_bclusters)
+        print('Splitted clusters:',self._splitted_bclusters)
         return iniconfigs
     
     def _scoccu_to_blkconfig(self,occu):
@@ -448,13 +472,16 @@ class CEBlock(object):
     #    cond += vec[2]+3*vec[3]
         o_clusfuncs,s_clusfuncs,e_clusfuncs=self._config_to_clusfuncs(config)
         soft_expr = LinExpr()
-        soft_expr.add(self._zero_eci)
+        ewald_term = 0
+        clus_term = self._zero_eci*self.scs
+        #soft_expr.add(self._zero_eci)
         for i,clusfunc in enumerate(s_clusfuncs):
             if clusfunc!=0:
                 soft_expr.add(clusfunc*self._splitted_ecis[i]*lambdas[i])
         for i,clusfunc in enumerate(e_clusfuncs):
             if clusfunc!=0:
                 soft_expr.add(clusfunc*self._ewald_ecis[i])
+                ewald_term+=self._ewald_ecis[i]
         for i,clusfunc in enumerate(o_clusfuncs):
             # When this cluster is a splitted.
             if i in self._splitted_ori_id:
@@ -465,13 +492,17 @@ class CEBlock(object):
                     hard_expr.add(lambdas[e_id])
                 if clusfunc!=0:
                     soft_expr.add(clusfunc*self._original_ecis[i]*(1-hard_expr))
+                    clus_term += _original_ecis[i]
             # When this cluster is not splitted.
             else:
                 if clusfunc!=0:
                     soft_expr.add(clusfunc*self._original_ecis[i])
+                    clus_term += self._original_ecis[i]
+
+        print("ewald term for sc:",ewald_term,"clus term for sc:",clus_term,"scs",self.scs)
 
         #Regularize!
-        return soft_expr/self.scs
+        return soft_expr/self.scs+self._zero_eci
 
     def _config_to_clusfuncs(self,config):
     # Calculate cluster functions based on configuration of the block.

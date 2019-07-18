@@ -239,8 +239,8 @@ class GScanonical(MSONable):
 
                         for i in range(len(bit_inds)):
                             for j in range(i,len(bit_inds)):
-                                for k in range(len(bit_inds[i])-1):
-                                    for l in range((k if i==j else 0),len(bit_inds[j])-1):
+                                for k in range(len(bit_inds[i])):
+                                    for l in range((k if i==j else 0),len(bit_inds[j])):
                                         if bit_inds[i][k]!=bit_inds[j][l]:
                                             bit_a = bit_inds[i][k]
                                             bit_b = bit_inds[j][l]
@@ -275,8 +275,8 @@ class GScanonical(MSONable):
                        
                         for i in range(len(bit_inds)):
                             for j in range(i,len(bit_inds)):
-                                for k in range(len(bit_inds[i])-1):
-                                    for l in range((k if i==j else 0),len(bit_inds[j])-1):
+                                for k in range(len(bit_inds[i])):
+                                    for l in range((k if i==j else 0),len(bit_inds[j])):
                                         if bit_inds[i][k]!=bit_inds[j][l]:
                                             bit_a = bit_inds[i][k]
                                             bit_b = bit_inds[j][l]
@@ -295,7 +295,7 @@ class GScanonical(MSONable):
                                                 id_b = sp_list[m][-1] #id of the reference specie
                                                 id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b -id_a -1
                                                 #Calculate H_r term with weight!
-                                                point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]
+                                                point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]*eci_ew[N_sp+id_abpair]
                                             eci_return_ew.append(point_eci)
                                             # eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
                     #Corrections
