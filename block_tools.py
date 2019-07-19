@@ -111,7 +111,7 @@ class CEBlock(object):
         self.use_ewald = self.cesup.cluster_expansion.use_ewald
         self.use_inv_r = self.cesup.cluster_expansion.use_inv_r
         self.fcoords = clus_sup.fcoords
-        print('fcoords:',self.fcoords)
+        #print('fcoords:',self.fcoords)
         self.n_iniframe = n_iniframe
         bit_inds_sc = []
         b_id = 1
@@ -133,6 +133,7 @@ class CEBlock(object):
 
             ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup.supercell])
             H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
+            #print('H:',H)
         #Ewald energy E_ew = (q+r)*H*(q+r)'. I used a stupid way to get H but quite effective.
             supbits = get_bits(clus_sup.supercell)
             r = np.array([GetIonChg(bits[-1]) for bits in supbits])
@@ -146,7 +147,8 @@ class CEBlock(object):
                 eci_ew = eci[-1]
                 H_mat = np.matrix(H)
                 r_mat = np.matrix(r)
-                self._zero_eci += (r_mat*H_mat*r_mat.T)[0,0]/self.scs
+                self._zero_eci += (r_mat*H_mat*r_mat.T)[0,0]/self.scs*eci_ew
+                #print('Zero eci:',self._zero_eci)
 
                 for i in range(len(bit_inds_sc)):
                     for j in range(i,len(bit_inds_sc)):
@@ -261,13 +263,13 @@ class CEBlock(object):
             all_hard = self._set_hard_expressions(lambdas)
             #print("Lambdas:",self._num_of_lambdas)
             for hard in all_hard:
-                print("Hard:\n",hard)
+                #print("Hard:\n",hard)
                 m.addConstr(hard<=1.0)
 
             # E = sum(J*Clus), to maximize E, use E-sum(J*clus)<=0, 'soft' constraints.
             for config in self._configs:
                 soft_expr = self._config_to_soft_expression(config,lambdas)
-                print("Soft:\n",soft_expr)
+                #print("Soft:\n",soft_expr)
                 m.addConstr(E<=soft_expr)
             
             m.optimize()
@@ -405,7 +407,7 @@ class CEBlock(object):
         #Must extend len(bit_inds) to self.num_of_vars. This is required by MAXSAT solvers.                    
         #print("Ori:",self._original_bclusters)
         #print("splt:",self._splitted_bclusters)
-        print("Initializing 20 frames with lowest CE-MC energy!")
+        print("Initializing frames with lowest CE-MC energy!")
         #preparing MC.
         #Critical error before: initial configuration can not simply be set by replication of 
         #sueprcell, or all lambda terms would be cancelled out!
@@ -438,9 +440,12 @@ class CEBlock(object):
 
         #print(rand_occu)
         iniconfigs = [self._scoccu_to_blkconfig(rand) for rand, rand_e in rand_occu]
-        print('Ewald clusters:',self._ewald_bclusters)
-        print('Original clusters:',self._original_bclusters)
-        print('Splitted clusters:',self._splitted_bclusters)
+        #print('Ewald clusters:',self._ewald_bclusters)
+        #print('Ewald ecis:',self._ewald_ecis)
+        #print('Original clusters:',self._original_bclusters)
+        #print('Splitted clusters:',self._splitted_bclusters)
+        #print('occus',rand_occu)
+        #print('configs',iniconfigs)
         return iniconfigs
     
     def _scoccu_to_blkconfig(self,occu):
@@ -457,7 +462,11 @@ class CEBlock(object):
             #print(self.bit_inds_sc) bit_inds_sc is wrong!
             if sp_id < len(self.bit_inds_sc[s_id]):
                 var =  self.bit_inds_sc[s_id][sp_id]
-                positive_vars_in_sc.append(var)
+                if var != self.num_bits_sc: 
+           #if var = self.num_bits_sc, then v%self.num_bits_sc = 0 will be ignored, this is not true!
+                    positive_vars_in_sc.append(var)
+                else:
+                    positive_vars_in_sc.append(0)
             # the last specie is ignored.
             # else:
             #    var = self.bit_inds_sc[s_id][sp_id] 
@@ -471,6 +480,7 @@ class CEBlock(object):
     #    And also:
     #    cond += vec[2]+3*vec[3]
         o_clusfuncs,s_clusfuncs,e_clusfuncs=self._config_to_clusfuncs(config)
+        #print(config)
         soft_expr = LinExpr()
         ewald_term = 0
         clus_term = self._zero_eci*self.scs
@@ -492,14 +502,14 @@ class CEBlock(object):
                     hard_expr.add(lambdas[e_id])
                 if clusfunc!=0:
                     soft_expr.add(clusfunc*self._original_ecis[i]*(1-hard_expr))
-                    clus_term += _original_ecis[i]
+                    clus_term += self._original_ecis[i]
             # When this cluster is not splitted.
             else:
                 if clusfunc!=0:
                     soft_expr.add(clusfunc*self._original_ecis[i])
                     clus_term += self._original_ecis[i]
 
-        print("ewald term for sc:",ewald_term,"clus term for sc:",clus_term,"scs",self.scs)
+        #print("ewald term for sc:",ewald_term,"clus term for sc:",clus_term,"scs",self.scs)
 
         #Regularize!
         return soft_expr/self.scs+self._zero_eci
@@ -556,7 +566,7 @@ class CEBlock(object):
         for bclus_ew,eci in zip(self._ewald_bclusters,self._ewald_ecis):
             _in_b_clusters = False
             for bc_id,bclus in enumerate(maxsat_bclusters):
-                if len(b_cluster)>2:
+                if len(bclus)>2:
                     continue
                 if bclus_ew == bclus or bclus_ew == Reversed(bclus):
                     maxsat_ecis[bc_id]=maxsat_ecis[bc_id]+2*eci

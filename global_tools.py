@@ -268,7 +268,7 @@ def Call_MAXSAT(solver='CCEHC-incomplete',MAXSAT_PATH='./solvers/',MAXSAT_CUTOFF
     os.system(MAXSAT_CMD)
     os.chdir('..')
     os.system('cp '+MAXSAT_PATH+'maxsat.out'+' ./maxsat.out')
-    print('MAXSAT solution found!')
+    print('MAXSAT solver finished!')
 
 def Read_MAXSAT():
     maxsat_res = []

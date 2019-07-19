@@ -351,16 +351,21 @@ class GScanonical(MSONable):
             print("Current GS upper-bound: %f"%cur_e_upper)
             cur_e_lower=self._solve_lower(mat_id)
             print("Current GS lower_bound: %f"%cur_e_lower)
-            if (self.e_upper is None and self.e_lower is None) or abs(self.e_upper-self.e_lower)>abs(cur_e_upper-cur_e_lower):
+            if (self.e_upper is None and self.e_lower is None) \
+                or abs(self.e_upper-self.e_lower)>abs(cur_e_upper-cur_e_lower):
                 #self.e_lower = cur_e_lower
                 old_e_upper = self.e_upper
                 old_e_lower = self.e_lower
                 self.e_upper = cur_e_upper
                 self.e_lower = cur_e_lower
                 self.str_upper = cur_str_upper
-                if not(old_e_upper is None) and not(old_e_lower is None) and abs(self.e_upper-self.e_lower)<0.001:
+                if not(old_e_upper is None) and not(old_e_lower is None) \
+                   and abs(self.e_upper-self.e_lower)<0.001:
                     print('UB and LB converged on matrix:',mat)
                     return True
+                else:
+                    print("Current UB:{}, current LB:{}, not converged!".\
+                          format(self.e_upper,self.e_lower))
             #except:
             #    cur_e_upper=None
             #    cur_str_upper=None
