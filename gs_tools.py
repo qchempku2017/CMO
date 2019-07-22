@@ -403,18 +403,27 @@ class GScanonical(MSONable):
 
         sc_size = int(round(np.abs(np.linalg.det(self.enumlist[mat_id]))))
         specie_names = [[str(sp) for sp in sorted(sublat.species_and_occu.keys())] for sublat in self.ce.structure]
-        #dict.keys() gives a special generator called 'Keyview', not list, and thus can not be indexed. 
+        #dict.keys() gives a special generator called 'Keyview', not list, and thus can not be indexed
         #convert into list first!
-        Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,conserve_comp=self.composition,\
-                           sp_names=specie_names, hard_marker=self.hard_marker, eci_mul=self.eci_mul)
 
-        #### Calling MAXSAT ####
-        Call_MAXSAT(solver=self.solver)
+        # When using incomplete solver, call 3 times at most to increase rate of success.
+        it = 1
+        while it<4:
+            Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,\
+                               conserve_comp=self.composition,sp_names=specie_names,\
+                               hard_marker=self.hard_marker, eci_mul=self.eci_mul)
+            #### Calling MAXSAT ####
+            Call_MAXSAT(solver=self.solver)
 
-        #### Output Processing ####
-        maxsat_res = Read_MAXSAT()
-        if len(maxsat_res)==0:
-            print("Error:Solution not found for supercell {}!".format(self.enumlist[mat_id]))
+            #### Output Processing ####
+            maxsat_res = Read_MAXSAT()
+            if len(maxsat_res)==0:
+                print("Error:Solution not found for supercell {}! \
+                   Attempt No.{}.".format(self.enumlist[mat_id],it))
+                it+=1
+            else:
+                print("Success:MAXSAT solution found!")
+                break
 
         cs = self.ce.supercell_from_matrix(self.enumlist[mat_id])
         cs_bits = get_bits(cs.supercell)
