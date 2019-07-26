@@ -346,13 +346,13 @@ class GScanonical(MSONable):
                 continue
 
             #print("Warning: Solving UB only.")
-            #try:
-            cur_e_upper,cur_str_upper=self._solve_upper(mat_id)
-            print("Current GS upper-bound: %f"%cur_e_upper)
-            cur_e_lower=self._solve_lower(mat_id)
-            print("Current GS lower_bound: %f"%cur_e_lower)
-            if (self.e_upper is None and self.e_lower is None) \
-                or abs(self.e_upper-self.e_lower)>abs(cur_e_upper-cur_e_lower):
+            try:
+                cur_e_upper,cur_str_upper=self._solve_upper(mat_id)
+                print("Current GS upper-bound: %f"%cur_e_upper)
+                cur_e_lower=self._solve_lower(mat_id)
+                print("Current GS lower_bound: %f"%cur_e_lower)
+                if (self.e_upper is None and self.e_lower is None) \
+                    or abs(self.e_upper-self.e_lower)>abs(cur_e_upper-cur_e_lower):
                 #self.e_lower = cur_e_lower
                 old_e_upper = self.e_upper
                 old_e_lower = self.e_lower
@@ -366,12 +366,14 @@ class GScanonical(MSONable):
                 else:
                     print("Current UB:{}, current LB:{}, not converged!".\
                           format(self.e_upper,self.e_lower))
-            #except:
-            #    cur_e_upper=None
-            #    cur_str_upper=None
-            #    print("Current GS upper-bound not found! Skipping")
-            
-
+            except:
+                cur_e_upper=None
+                cur_str_upper=None
+                cur_e_lower=None
+                self.e_upper = None
+                self.e_lower = None
+                self.str_upper = None
+                print("GS UB or LB for {} not found! Skipping".format(mat))           
         return False
 
     def _electrostatic_correction(self,mat_id):
@@ -408,7 +410,7 @@ class GScanonical(MSONable):
 
         # When using incomplete solver, call 3 times at most to increase rate of success.
         it = 1
-        while it<4:
+        while it<5:
             Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,\
                                conserve_comp=self.composition,sp_names=specie_names,\
                                hard_marker=self.hard_marker, eci_mul=self.eci_mul)
@@ -418,8 +420,7 @@ class GScanonical(MSONable):
             #### Output Processing ####
             maxsat_res = Read_MAXSAT()
             if len(maxsat_res)==0:
-                print("Error:Solution not found for supercell {}! \
-                   Attempt No.{}.".format(self.enumlist[mat_id],it))
+                print("ERROR:Solution not found for supercell {}! Attempt No.{}.".format(self.enumlist[mat_id],it))
                 it+=1
             else:
                 print("Success:MAXSAT solution found!")
