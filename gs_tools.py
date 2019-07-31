@@ -245,7 +245,7 @@ class GScanonical(MSONable):
                                             bit_a = bit_inds[i][k]
                                             bit_b = bit_inds[j][l]
                                             b_clusters_ew.append([bit_a,bit_b]) 
-                                            eci_return_ew.append(eci_ew* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                            eci_return_ew.append(2*eci_ew* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
                                         else:
                                             bit = bit_inds[i][k]
                                             b_clusters_ew.append([bit])
@@ -284,7 +284,7 @@ class GScanonical(MSONable):
                                             id_a = sp_list[i][k]
                                             id_b = sp_list[j][l]
                                             id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b - id_a -1 # Serial id of a,b pair in eci_ew list.
-                                            eci_return_ew.append(eci_ew[N_sp+id_abpair]* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                            eci_return_ew.append(2*eci_ew[N_sp+id_abpair]* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
                                         else: #Point terms
                                             bit = bit_inds[i][k]
                                             b_clusters_ew.append([bit])
@@ -306,13 +306,13 @@ class GScanonical(MSONable):
                                 continue
                             #b_cluster won't duplicate. Trust Danill.
                             if b_cluster == b_cluster_ew or Reversed(b_cluster)==b_cluster_ew:                        
-                                eci_return[bc_id]=eci_return[bc_id] + b_eci_ew*2
+                                eci_return[bc_id]=eci_return[bc_id] + b_eci_ew
                                 #*2 because a pair only appear in b_clusters_ew for once, but should be summed twice
                                 _in_b_clusters = True
                                 break
                         if not _in_b_clusters:
                             b_clusters.append(b_cluster_ew)
-                            eci_return.append(b_eci_ew*2)
+                            eci_return.append(b_eci_ew)
         
                 self._bclus_corrected.append(b_clusters)
                 self._ecis_corrected.append(eci_return)
@@ -346,34 +346,32 @@ class GScanonical(MSONable):
                 continue
 
             #print("Warning: Solving UB only.")
-            try:
-                cur_e_upper,cur_str_upper=self._solve_upper(mat_id)
-                print("Current GS upper-bound: %f"%cur_e_upper)
-                cur_e_lower=self._solve_lower(mat_id)
-                print("Current GS lower_bound: %f"%cur_e_lower)
-                if (self.e_upper is None and self.e_lower is None) \
-                    or abs(self.e_upper-self.e_lower)>abs(cur_e_upper-cur_e_lower):
-                #self.e_lower = cur_e_lower
+            #try:
+            cur_e_upper,cur_str_upper=self._solve_upper(mat_id)
+            print("Current GS upper-bound: %f"%cur_e_upper)
+            cur_e_lower=self._solve_lower(mat_id)
+            print("Current GS lower_bound: %f"%cur_e_lower)
+            if (self.e_upper is None and self.e_lower is None) \
+                or abs(self.e_upper-self.e_lower)>abs(cur_e_upper-cur_e_lower):
+            #self.e_lower = cur_e_lower
                 old_e_upper = self.e_upper
                 old_e_lower = self.e_lower
                 self.e_upper = cur_e_upper
                 self.e_lower = cur_e_lower
                 self.str_upper = cur_str_upper
-                if not(old_e_upper is None) and not(old_e_lower is None) \
-                   and abs(self.e_upper-self.e_lower)<0.001:
+                if not(old_e_upper is None) and not(old_e_lower is None) and abs(self.e_upper-self.e_lower)<0.001:
                     print('UB and LB converged on matrix:',mat)
                     return True
                 else:
-                    print("Current UB:{}, current LB:{}, not converged!".\
-                          format(self.e_upper,self.e_lower))
-            except:
-                cur_e_upper=None
-                cur_str_upper=None
-                cur_e_lower=None
-                self.e_upper = None
-                self.e_lower = None
-                self.str_upper = None
-                print("GS UB or LB for {} not found! Skipping".format(mat))           
+                    print("Current UB:{}, current LB:{}, not converged!".format(self.e_upper,self.e_lower))
+           # except:
+           #     cur_e_upper=None
+           #     cur_str_upper=None
+           #     cur_e_lower=None
+           #     self.e_upper = None
+           #     self.e_lower = None
+           #     self.str_upper = None
+           #     print("GS UB or LB for {} not found! Skipping".format(mat))           
         return False
 
     def _electrostatic_correction(self,mat_id):
@@ -410,7 +408,7 @@ class GScanonical(MSONable):
 
         # When using incomplete solver, call 3 times at most to increase rate of success.
         it = 1
-        while it<5:
+        while it<10:
             Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,\
                                conserve_comp=self.composition,sp_names=specie_names,\
                                hard_marker=self.hard_marker, eci_mul=self.eci_mul)
@@ -637,7 +635,8 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gs_setting
         print("Solving for composition:",compstring)
         gs_socket.solve()
         #if gs_socket.solved:
-        gss[compstring]['gs_structure']=gs_socket.str_upper.as_dict()
+        gss[compstring]['gs_structure']=\
+            gs_socket.str_upper.as_dict() if gs_socket.str_upper else None
         gss[compstring]['gs_energy']=gs_socket.e_upper
         gss[compstring]['solved']=gs_socket.solved
 

@@ -159,7 +159,7 @@ class CEBlock(object):
                                     bit_a = bit_inds_sc[i][k]
                                     bit_b = bit_inds_sc[j][l]
                                     b_clusters_ew.append([bit_a,bit_b]) 
-                                    eci_return_ew.append(eci_ew* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                    eci_return_ew.append(2*eci_ew*(chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
                                 else:
                                     bit = bit_inds_sc[i][k]
                                     b_clusters_ew.append([bit])
@@ -212,7 +212,7 @@ class CEBlock(object):
                                     id_a = sp_list[i][k]
                                     id_b = sp_list[j][l]
                                     id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b - id_a -1 # Serial id of a,b pair in eci_ew list.
-                                    eci_return_ew.append(eci_ew[N_sp+id_abpair]* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                    eci_return_ew.append(2*eci_ew[N_sp+id_abpair]* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
                                 else: #Point terms
                                     bit = bit_inds_sc[i][k]
                                     b_clusters_ew.append([bit])
@@ -238,7 +238,6 @@ class CEBlock(object):
         self._original_bclusters = []
         self._original_ecis = []
         
-
 #### public socket ####
     def solve(self):
         '''
@@ -469,7 +468,7 @@ class CEBlock(object):
             posvars_scs.append(posvars_sc)
 
         n_pieces = self.num_of_vars//self.num_bits_sc
-        for i in range(self.n_iniframes):
+        for i in range(self.n_iniframe):
             posvars=[[num+i*self.num_bits_sc for num in random.choice(posvars_scs)]\
                                     for i in range(n_pieces)] 
             posvars=sum(posvars,[])
