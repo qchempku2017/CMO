@@ -471,7 +471,9 @@ class GScanonical(MSONable):
         """
 
         clus_sup = self.ce.supercell_from_matrix(self.enumlist[mat_id])
-        blk = CEBlock(clus_sup, self.eci, self.composition, block_range=self.max_block_range,hard_marker=self.hard_marker,eci_mul=self.eci_mul,num_of_sclus_tosplit=self.num_split,n_iniframe=self.n_iniframe)           
+        blk = CEBlock(clus_sup, self.eci, self.composition, block_range=self.max_block_range,hard_marker=self.hard_marker,\
+                      eci_mul=self.eci_mul,num_of_sclus_tosplit=self.num_split,n_iniframe=self.n_iniframe,\
+                      solver=self.solver)           
         #### Calling Gurobi ####
         lower_e = blk.solve()
         return lower_e

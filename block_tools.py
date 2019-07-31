@@ -85,13 +85,16 @@ class CEBlock(object):
         num_of_sclus_tosplit: This specifies how many SymmetrizedClusters are chosen for splitting. Select those with highest
                               absolute ECI values.
     '''
-    def __init__(self, clus_sup, eci, composition, block_range=1,hard_marker=1000000000000000,eci_mul=1000000,n_iniframe=20,num_of_sclus_tosplit=10):
+    def __init__(self, clus_sup, eci, composition, block_range=1, solver='CCEHC-incomplete', hard_marker=1000000000000000,\
+                 eci_mul=1000000,n_iniframe=20,num_of_sclus_tosplit=10):
 
         self.cesup = clus_sup
         self.ce = clus_sup.cluster_expansion
         self.sym_clusters = self.ce.symmetrized_clusters
         self.clusters = self.ce.clusters
         self.eci = eci
+
+        self.solver = solver
 
         self._zero_eci = self.eci[0]
 
@@ -283,7 +286,7 @@ class CEBlock(object):
             maxsat_bclus,maxsat_ecis=self._form_maxsat()
             self._Write_MAXSAT_input_forblk(maxsat_bclus,maxsat_ecis)
 
-            Call_MAXSAT()
+            Call_MAXSAT(solver=self.solver)
             new_config = Read_MAXSAT()[:self.num_of_vars]
 
             if new_config in self._configs:
