@@ -384,8 +384,7 @@ class CEBlock(object):
         # self.num_of_vars = max([max(bclus) for bclus in self._splitted_bclusters])
         # No! Things are not that simple, when you consider sum(s)=1 constraint for a site!
         max_bit = max([max(bclus) for bclus in self._splitted_bclusters])
-        max_bit_orimage = (max_bit-1)%self.num_bits_sc+1
-        #bit starts from 1
+        max_bit_orimage = max_bit%self.num_bits_sc
         for s, site in enumerate(self.bit_inds_sc):
             if max_bit_orimage in site:
                 max_site_orimage = s

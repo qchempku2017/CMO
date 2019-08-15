@@ -428,7 +428,7 @@ class GScanonical(MSONable):
         cs_bits = get_bits(cs.supercell)
 
         upper_sites = []
-        #print(site_specie_ids)
+        print(site_specie_ids)
         for s,site in enumerate(site_specie_ids):
             should_be_ref = True
             st = cs.supercell[s]
