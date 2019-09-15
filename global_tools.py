@@ -11,6 +11,7 @@ from operator import mul
 from itertools import permutations,product,combinations
 from functools import partial,reduce
 import os
+import json
 
 ##################################
 ## General tools that will be frequently cross referenced.
@@ -40,9 +41,9 @@ def get_bits(structure):
     all_bits = []
     for site in structure:
         bits = []
-        for sp in sorted(site.species_and_occu.keys()):
+        for sp in sorted(site.species.keys()):
             bits.append(str(sp))
-        if site.species_and_occu.num_atoms < 0.99:
+        if site.species.num_atoms < 0.99:
             bits.append("Vacancy")
        #bits.append("Vacancy")
         all_bits.append(bits)
@@ -126,6 +127,7 @@ def RepresentsInt(s):
 
 def Reversed(pair):
     return pair[::-1]
+        
 
 def write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
     # This is a somewhat strange input set. Essentially the matgen input set (PBE+U), but with tigher
@@ -170,7 +172,9 @@ def write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vas
 
 
 
-def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,sc_size=None,conserve_comp=None,sp_names=None,hard_marker=1000000000000,eci_mul=1000000):
+def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,maxsat_fin='maxsat.wcnf',\
+                       MAXSAT_PATH='./solvers/',sc_size=None,conserve_comp=None,\
+                       sp_names=None,hard_marker=1000000000000,eci_mul=1000000):
     print('Preparing MAXSAT input file.')
     soft_cls = []
     hard_cls = []
@@ -246,33 +250,58 @@ def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,sc_size=None,conserve_comp=No
     maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(num_of_vars,num_of_cls,hard_marker)
     for clause in all_cls:
         maxsat_input+=(' '.join([str(lit) for lit in clause])+' 0\n')
-    f_maxsat = open('maxsat.wcnf','w')
+    f_maxsat = open(MAXSAT_PATH+maxsat_fin,'w')
     f_maxsat.write(maxsat_input)
     f_maxsat.close()
-    print('maxsat.wcnf written.')
+    print('{} written into.'.format(maxsat_fin,MAXSAT_PATH))
 
-def Call_MAXSAT(solver='CCEHC-incomplete',MAXSAT_PATH='./solvers/',MAXSAT_CUTOFF = 200):
-    COMPLETE_MAXSAT = ['CCEHC_to_akmaxsat','ccls_akmaxsat']
+def Call_MAXSAT(maxsat_fin='maxsat.wcnf',maxsat_fout='maxsat.out',solver='CCEHC-incomplete',\
+                MAXSAT_PATH='./solvers/',maxsat_file='maxsat.mson',MAXSAT_CUTOFF = 200,entry_name='default'):
+    COMPLETE_MAXSAT = ['CCEHC_to_akmaxsat','ccls_akmaxsat',\
+                       'open-wbo-gluc','open-wbo-riss']
     INCOMPLETE_MAXSAT = ['CCLS-incomplete','CCEHC-incomplete']
 
-    print('Callsing MAXSAT solver.')
-    os.system('cp ./maxsat.wcnf '+MAXSAT_PATH)
-    os.chdir(MAXSAT_PATH)
-    MAXSAT_CMD = './'+solver+' ./maxsat.wcnf'
+    print('Calling MAXSAT solver.')
+    os.chdir(MAXSAT_PATH) 
+    MAXSAT_CMD = './'+solver+' ./'+maxsat_fin
     if solver in INCOMPLETE_MAXSAT:
         print("Warning: using incomplete solver. Global optimacy not guaranteed!")
     if solver in COMPLETE_MAXSAT:
         print("Warning: using complete solver. Time cost might be intractable. Good luck!")
-    MAXSAT_CMD += '> maxsat.out'
+    MAXSAT_CMD += '> '+maxsat_fout
     print(MAXSAT_CMD)
     os.system(MAXSAT_CMD)
     os.chdir('..')
-    os.system('cp '+MAXSAT_PATH+'maxsat.out'+' ./maxsat.out')
-    print('MAXSAT solver finished!')
+    #Saving maxsat calculations into mson.
+    entry = {}
+    with open(MAXSAT_PATH+maxsat_fin) as fin:
+        s_in = fin.read()
+    with open(MAXSAT_PATH+maxsat_fout) as fout:
+        s_o = fout.read()
+    entry['name']=entry_name
+    entry['i']=s_in
+    entry['o']=s_o
+    if os.path.isfile(maxsat_file):
+        try:
+            with open(maxsat_file) as f:
+                l = json.load(f)
+        except:
+            print("Warning: maxsat file is abnormal. Check before usage.")
+            l = []
+        l.append(entry)
+        with open(maxsat_file,'w') as f:
+            json.dump(l,f)
+    else:
+        l = []
+        l.append(entry)
+        with open(maxsat_file,'w') as f:
+            json.dump(l,f)
+    
+    print('MAXSAT finished!')
 
-def Read_MAXSAT():
+def Read_MAXSAT(MAXSAT_PATH='./solvers/',maxsat_fout='maxsat.out'):
     maxsat_res = []
-    with open('./maxsat.out') as f_res:
+    with open(MAXSAT_PATH+maxsat_fout) as f_res:
         lines = f_res.readlines()
         for line in lines:
             if line[0]=='v':

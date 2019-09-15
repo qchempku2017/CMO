@@ -77,8 +77,11 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
         selected_scs=[mat_mul(sc,transmat) for sc in selected_scs]
     return selected_scs
 
-def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[500, 1500, 10000],compaxis=None):
-    '''For CE sampling using MC, use three set of temperature, merge this with LocalOrdering code
+def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[500, 1500, 10000],compaxis=None,n_select=1):
+    '''This function checks the previous calculation directories when called. If no previous calculations, it
+       generates the intial pool. If there are previous calculations, add new sampled structures based on 
+       structure selection rule.
+       For CE sampling using MC, use three set of temperature, merge this with LocalOrdering code.
        ce_file: directory of CE Mson data file
        outdir: directory to write outputs
        SCLst: a list contaning enumerated SC's and RO pairs.
@@ -88,6 +91,8 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
        compaxis: a list of compound names. If specified, the program will caculate the composition in compound ratio,
                 but ususally not used since we don't think its necessary nor applicable in complexed disordered 
                 rocksalt systems.
+       n_select: if previous calculations exist, choose n_select unique structures from unique_structures based on 
+                serial structure selection rule. default = 1.
 
     '''
     print('#### MC Initialization ####')
@@ -110,14 +115,14 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
                 if RO_old_string not in calculated_max_ids:
                     calculated_max_ids[RO_old_string]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
     else: 
-        print("Not checking versus previous calculations")
+        print("No previous calculations, generating the intial pool.")
  
     if ce_file and os.path.isfile(ce_file):
         # Load cluster expansion
         with open(ce_file,'r') as Fid: cedata = json.load(Fid);
         CE=ClusterExpansion.from_dict(cedata['cluster_expansion']); 
         ECIs=cedata['ecis']; 
-        print('ce information:'); print(ce.structure);
+        print('Ce information:'); print(ce.structure);
         Prim = ce.structure
 
     else:
@@ -218,10 +223,10 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
         # Format as (structure, temperature) - for ground state, temperature is "0"
         # print("GS structure:",clusSC.structure_from_occu(sa_occu))
         mc_structs[RO_string].append((clusSC.structure_from_occu(sa_occu),0))
-        print("MC GS added.")
+        print("MC GS added to the preset.")
 
         for T in TLst:
-            print("Doing MC under T = {}K".format(T))
+            print("Doing MC sampling under T = {}K".format(T))
             # Equilibration run
             # Play around with the number of MC flips in the run - the current number is very arbitrary
 	    # We can try to implement VO et.al's sampling method here!
@@ -269,6 +274,13 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
                 unique_structs[RO_string].append((struct,T))
                 unqCnt += 1
     print('Obtained %d unique occupied random structures.'%unqCnt)
+
+    # Selection rule (Ask from Peichen):
+    # if len(calculate_structures):
+    #     print("Structure selection task.") 
+    #     unique_structs = _Structure_selection(unique_structs,n_select) 
+    # else:
+    #     print("Initial set generation task.")   
 
     # Save structures
     print('#### MC Final Saving ####')
@@ -319,10 +331,11 @@ def _generate_axis_ref(compounds):
     """
     Here we do axis decomposition for a chemical formula. Not necessary for complexed systems.
     Inputs:
-        formula: chemical formula, represented in dictionary form: {'Li+':8,'Co3+':8,'O2-':16}
         compounds: a list of compound axis in string form: ['LiCoO2','CoO2']
     Outputs:
-        A dict that gives the molar ratio of each compound: {'LiCoO2':1.0, 'CoO2':0}
+        compSpecieNums: a dict recording how many species a compound has in its formula: {'CoO2':['Co4+':1,'O2-':2]} 
+        compUniqSpecies: a dict recording the 'marker specie' to a compound:{'LiCoO2':'Co3+','CoO2':'Co4+'}
+        uniqSpecieComps: reversed dict of compUniqSpecies.
     """
     ###Preprocessing###
     compSpecieNums = {}
@@ -505,7 +518,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
     return SCLst
 
 class StructureGenerator(MSONable):
-    def __init__(self,prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson'):
+    def __init__(self,prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson',n_select=1):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
               rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
@@ -528,6 +541,7 @@ class StructureGenerator(MSONable):
               You can apply a transformation before shape enumeration.
         ce_file: the file that contains a full record of the current cluster expansion work, including ce.as_dict, structures, ecis, etc.
         vasp_settings: setting parameters for vasp calcs. Is in dictionary form. Keys are 'functional','num_kpoints','additional_vasp_settings'(in dictionary form), 'strain'(in matrix or list form)
+        n_select: when previous calculations exist, this parameter defines how many structure to enmerate in each cycle.
         """
 
         self.prim = prim
@@ -542,6 +556,7 @@ class StructureGenerator(MSONable):
         #print("Using transformation matrix {}".format(transmat))
         self.ce_file = ce_file
         self.outdir =  outdir
+        self.n_select = n_select
         if os.path.isfile(vasp_settings):
             print("Applying VASP settings in {}.".format(vasp_settings))
             with open(vasp_settings) as vs_in:
@@ -549,12 +564,18 @@ class StructureGenerator(MSONable):
         else:
             print("Applying CEAuto default VASP settings.")
             self.vasp_settings = None
+        self._sc_ro = None
+
+    @property
+    def sc_ro(self):
+        if not self._sc_ro:
+            self._sc_ro =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
+                                        self.sample_step, self.sc_selec_num, self.transmat,self.n_select)
+        return self._sc_ro
+    #Share the same set of sc_ro across project.
 
     def generate_structures(self):
-        
-        sc_ro =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
-                                        self.sample_step, self.sc_selec_num, self.transmat)
-        _get_mc_structs(sc_ro,ce_file=self.ce_file,outdir=self.outdir,Prim=self.prim,TLst=[500, 1500, 10000],\
+        _get_mc_structs(self.sc_ro,ce_file=self.ce_file,outdir=self.outdir,Prim=self.prim,TLst=[500, 1500, 10000],\
                             compaxis= self.comp_axis)
 
     def write_structures(self):
@@ -604,6 +625,10 @@ class StructureGenerator(MSONable):
             generator.outdir = d['outdir']
         if 'vasp_settings' in d:
             generator.vasp_settings = d['vasp_settings']
+        if 'n_select' in d:
+            generator.n_select = d['n_select']
+        if 'sc_ro' in d:
+            generator._sc_ro = d['sc_ro']
         return generator
 
     def as_dict(self):
@@ -617,6 +642,8 @@ class StructureGenerator(MSONable):
                 'ce_file':self.ce_file,\
                 'outdir':self.outdir,\
                 'vasp_settings':self.vasp_settings,\
+                'n_select':self.n_select,\
+                'sc_ro':self.sc_ro,\
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
                }
