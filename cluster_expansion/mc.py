@@ -1,3 +1,7 @@
+########
+###Updated on 2019.02.27 to be compatible with python3
+########
+
 from __future__ import division
 
 from pymatgen import Composition
@@ -17,6 +21,8 @@ import logging
 from copy import deepcopy
 from pymatgen.transformations.standard_transformations import OrderDisorderedStructureTransformation
 
+
+
 def get_flips(inds, occu):
     """
     :param inds: site indicies
@@ -25,8 +31,7 @@ def get_flips(inds, occu):
     """
     i = random.choice(inds)
     all_j = [j for j in inds if occu[i] != occu[j]]
-    if not all_j:
-        return []
+    if not all_j: return []
     j = random.choice(all_j)
     return [(i, occu[j]), (j, occu[i])]
 
@@ -72,6 +77,7 @@ def run_T(ecis, cluster_supercell, occu, T, n_loops, ind_groups, n_rand=0, check
     save_rand = False
 
     energies = []
+    ###Set up the step when energy is taken
     if sample_energies > 0:
         en_step = int(n_loops/sample_energies)
     else:
@@ -122,7 +128,7 @@ def run_T(ecis, cluster_supercell, occu, T, n_loops, ind_groups, n_rand=0, check
         return occu, min_occu, min_e, rand_occu
 
 def simulated_anneal(ecis, cluster_supercell, occu, ind_groups, n_loops, init_T, final_T, n_steps, return_E=False):
-    print(init_T,final_T)
+    #print(init_T,final_T)
     assert final_T < init_T
     T_step = int((init_T - final_T) / n_steps)
     T = init_T
@@ -141,3 +147,6 @@ def simulated_anneal(ecis, cluster_supercell, occu, ind_groups, n_loops, init_T,
         corr_min = cluster_supercell.corr_from_occupancy(min_occu)
         min_energy = np.dot(corr_min, ecis)
         return min_occu, min_energy
+
+
+

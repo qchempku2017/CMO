@@ -16,7 +16,7 @@ import numpy as np
 import numpy.linalg as la
 
 from pymatgen.analysis.structure_matcher import StructureMatcher, ElementComparator
-from pyabinitio.cluster_expansion.ce import ClusterExpansion
+from cluster_expansion.ce import ClusterExpansion
 from pymatgen.io.vasp.sets import MITRelaxSet
 from pymatgen.io.vasp.inputs import *
 from pymatgen.io.vasp.outputs import *
@@ -33,7 +33,7 @@ from functools import partial,reduce
 import multiprocessing
 import collections
 
-from mc import *
+from cluster_expansion.mc import *
 from global_tools import *
 
 ####
@@ -122,7 +122,7 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
         with open(ce_file,'r') as Fid: cedata = json.load(Fid);
         CE=ClusterExpansion.from_dict(cedata['cluster_expansion']); 
         ECIs=cedata['ecis']; 
-        print('Ce information:'); print(ce.structure);
+        print('Previous CE information:'); print(ce.structure);
         Prim = ce.structure
 
     else:

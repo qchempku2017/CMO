@@ -18,8 +18,8 @@ import numpy.linalg as la
 
 from pymatgen.analysis.structure_matcher import StructureMatcher, ElementComparator
 from pymatgen.analysis.local_env import CrystalNN
-from pyabinitio.cluster_expansion.eci_fit import EciGenerator
-from pyabinitio.cluster_expansion.ce import ClusterExpansion
+from cluster_expansion.eci_fit import EciGenerator
+from cluster_expansion.ce import ClusterExpansion
 from pymatgen.io.vasp.inputs import *
 from pymatgen.io.vasp.outputs import *
 from pymatgen.io.cif import CifParser
@@ -52,6 +52,7 @@ def _assign_ox_states(struct,magmoms):
     """
     # Oxidation states corresponding to a range of magnetic moments (min, max)
     ###OXRange imported from OxData.py
+    # Talk to Tina Chen about stable Oxstate assignment.
     DefaultOx={'Li':1,'F':-1,'O':-2, 'Mg':2, 'Ca':2 }
     OxLst=[];
     # Restricted Ox state for O to 2 here, but actually can be one. There is currently
@@ -76,12 +77,22 @@ def _assign_ox_states(struct,magmoms):
 #### Public Tools ####
 class CalcAnalyzer(MSONable):
 
-    def __init__(self, vaspdir='vasp_run', prim_file='prim.cif',calc_data_file='calcdata.mson',ce_file='ce.mson',ce_radius=None,max_de=100,max_ew=3,max_deformation={'ltol':0.2,'stol':0.15,'angle_tol':5}):
+    def __init__(self, vaspdir='vasp_run', prim_file='prim.cif',calc_data_file='calcdata.mson',ce_file='ce.mson',ce_radius=None,\
+                 max_de=100,max_ew=3, sm_type='pmg_sm', ltol=0.2, stol=0.15, angle_tol=5, vor_tol=1e-3, solver='cvxopt_l1',\
+                 basis='01',weight='unweighted'):
         self.calcdata = {}
         self.vaspdir = vaspdir
         self.calc_data_file = calc_data_file
         self.ce_file = ce_file
-        self.max_deformation = max_deformation
+        self.solver = solver
+        self.weight = weight
+        self.sm_type = sm_type
+        self.ltol = ltol
+        self.stol = stol
+        self.angle_tol = angle_tol
+        self.vor_tol = vor_tol
+        self.basis = basis
+        
 
         self.prim = CifParser(prim_file).get_structures()[0]
 
@@ -123,9 +134,10 @@ class CalcAnalyzer(MSONable):
             self.max_de = max_de
             self.max_ew = max_ew
 
-            self.ce = ClusterExpansion.from_radii(self.prim, ce_radius,ltol=max_deformation['ltol'], \
-                                     stol=max_deformation['stol'], angle_tol=max_deformation['angle_tol'],\
-                                     supercell_size='volume',use_ewald=True,use_inv_r=False,eta=None);
+            self.ce = ClusterExpansion.from_radii(self.prim, ce_radius,sm_type = self.sm_type,\
+                                     ltol=self.ltol, stol=self.stol, angle_tol=self.angle_tol,\
+                                     vor_tol=self.vor_tol, supercell_size='volume',use_ewald=True,\
+                                     use_inv_r=False,eta=None, basis=self.basis);
     
         #self.max_deformation = max_deformation
         #print("Scanning vasprun for new data points.")
@@ -163,10 +175,25 @@ class CalcAnalyzer(MSONable):
     
        # Fit expansion, currently only support energy/free energy expansion. If you want to expand other properties, 
         # You have to write on your own.
-        self.ECIG=EciGenerator.unweighted(cluster_expansion=self.ce, structures=ValidStrs,\
+        if self.weight=='unweighted':
+            self.ECIG=EciGenerator.unweighted(cluster_expansion=self.ce, structures=ValidStrs,\
                                      energies = energies,\
-                                     max_dielectric=self.max_de, max_ewald=self.max_ew);
-    
+                                     max_dielectric=self.max_de, max_ewald=self.max_ew, \
+                                     solver = self.solver);
+        elif self.weight == 'e_above_hull':
+            self.ECIG=EciGenerator.weight_by_e_above_hull(cluster_expansion=self.ce, structures=ValidStrs,\
+                                     energies = energies,\
+                                     max_dielectric=self.max_de, max_ewald=self.max_ew, \
+                                     solver = self.solver);
+        elif self.weight == 'e_above_comp':
+            self.ECIG=EciGenerator.weight_by_e_above_comp(cluster_expansion=self.ce, structures=ValidStrs,\
+                                     energies = energies,\
+                                     max_dielectric=self.max_de, max_ewald=self.max_ew, \
+                                     solver = self.solver);
+        
+        else:
+            raise ValueError('Weighting option not implemented!')
+
         print("RMSE: {} eV/prim, num of points: {}.".format(self.ECIG.rmse,len(ValidStrs))); 
 
     
