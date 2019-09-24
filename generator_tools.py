@@ -518,7 +518,8 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
     return SCLst
 
 class StructureGenerator(MSONable):
-    def __init__(self,prim, outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64, sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson',n_select=1):
+    def __init__(self,prim_file='prim.cif', outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64,\
+                 sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson',n_select=1):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
               rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
@@ -543,8 +544,11 @@ class StructureGenerator(MSONable):
         vasp_settings: setting parameters for vasp calcs. Is in dictionary form. Keys are 'functional','num_kpoints','additional_vasp_settings'(in dictionary form), 'strain'(in matrix or list form)
         n_select: when previous calculations exist, this parameter defines how many structure to enmerate in each cycle.
         """
+        if os.path.isfile(prim_file):
+            self.prim = CifPrser(prim_file).get_structures()[0]
+        else:
+            raise ValueError("Primitive cell file can not be found, stopping!")
 
-        self.prim = prim
         if enforced_occu:
             print("Occupation on each site at least:",enforced_occu)
         self.enforced_occu = enforced_occu
@@ -604,29 +608,53 @@ class StructureGenerator(MSONable):
 # I/O interface for saving only, from_dict method not required
 ####
     @classmethod
+    def from_settings(cls,setting_file='generator_settings.mson'):
+        if os.path.isfile(setting_file):
+            with open(setting_file,'r') as fs:
+                settings = json.load(fs)
+        else:
+            settings = {}
+        return cls.from_dict(settings)
+
+    @classmethod
     def from_dict(cls,d):
-        prim = Structure.from_dict(d['prim'])
-        generator = cls(prim)
-        if 'enforced_occu' in d:
-            generator.enforced_occu = d['enforced_occu']
-        if 'comp_axis' in d:
-            generator.comp_axis = d['comp_axis']
-        if 'sample_step' in d:
-            generator.sample_step = d['sample_step']
-        if 'max_sc_size' in d:
-            generator.max_sc_size = d['max_sc_size']
-        if 'sc_selec_num' in d:
-            generator.sc_selec_num = d['sc_selec_num']
-        if 'transmat' in d:
-            generator.transmat = d['transmat']
-        if 'ce_file' in d:
-            generator.ce_file = d['ce_file']
-        if 'outdir' in d:
-            generator.outdir = d['outdir']
-        if 'vasp_settings' in d:
-            generator.vasp_settings = d['vasp_settings']
-        if 'n_select' in d:
-            generator.n_select = d['n_select']
+        if 'prim_file' in d: prim_file = d['prim_file'];
+        else: prim_file = 'prim.cif'; 
+
+        if 'enforced_occu' in d: enforced_occu = d['enforced_occu'];
+        else: enforced_occu = None;
+
+        if 'comp_axis' in d: comp_axis = d['comp_axis'];
+        else: comp_axis = None;
+
+        if 'sample_step' in d: sample_step = d['sample_step'];
+        else: sample_step = 1;
+
+        if 'max_sc_size' in d: max_sc_size = d['max_sc_size'];
+        else: max_sc_size = 64;
+
+        if 'sc_selec_num' in d: sc_selec_num = d['sc_selec_num'];
+        else: sc_selec_num = 10;
+
+        if 'transmat' in d: transmat = d['transmat'];
+        else: transmat = None;
+
+        if 'ce_file' in d: ce_file = d['ce_file'];
+        else: ce_file = 'ce.mson';
+
+        if 'outdir' in d: outdir = d['outdir'];
+        else: outdir = 'vasp_run';
+
+        if 'vasp_settings' in d: vasp_settings = d['vasp_settings'];
+        else: vasp_settings = 'vasp_settings.mson';
+
+        if 'n_select' in d: n_select = d['n_select'];
+        else: n_select = 1;
+        
+        generator = cls(prim_file=prim_file, enforced_occu=enforced_occu, comp_axis=comp_axis, sample_step=sample_step,\
+                        max_sc_size=max_sc_size, sc_selec_enum=sc_selec_enum, transmat=transmat, ce_file=ce_file,\
+                        outdir=outdir, vasp_settings=vasp_settings, n_select=n_select)
+
         if 'sc_ro' in d:
             generator._sc_ro = d['sc_ro']
         return generator
@@ -649,5 +677,6 @@ class StructureGenerator(MSONable):
                }
     
     def write_settings(self,setting='generator_settings.mson'):
+        print("Writing generator settings to {}".format(setting))
         with open(setting,'w') as setting_file:
             json.dump(self.as_dict(),setting_file)

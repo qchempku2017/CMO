@@ -10,7 +10,7 @@ __version__ = 'Dev'
 import os
 import sys
 import json
-from monty.json import MSONable
+#from monty.json import MSONable
 import random
 from copy import deepcopy
 import numpy as np
@@ -75,7 +75,7 @@ def _assign_ox_states(struct,magmoms):
     return struct
  
 #### Public Tools ####
-class CalcAnalyzer(MSONable):
+class CalcAnalyzer(object):
 
     def __init__(self, vaspdir='vasp_run', prim_file='prim.cif',calc_data_file='calcdata.mson',ce_file='ce.mson',ce_radius=None,\
                  max_de=100,max_ew=3, sm_type='pmg_sm', ltol=0.2, stol=0.15, angle_tol=5, vor_tol=1e-3, solver='cvxopt_l1',\
@@ -133,6 +133,7 @@ class CalcAnalyzer(MSONable):
 
             self.max_de = max_de
             self.max_ew = max_ew
+            self.ce_radius = ce_radius
 
             self.ce = ClusterExpansion.from_radii(self.prim, ce_radius,sm_type = self.sm_type,\
                                      ltol=self.ltol, stol=self.stol, angle_tol=self.angle_tol,\
@@ -141,7 +142,7 @@ class CalcAnalyzer(MSONable):
     
         #self.max_deformation = max_deformation
         #print("Scanning vasprun for new data points.")
-        self._load_data()
+        
 
     def fit_ce(self):
         """
@@ -159,6 +160,8 @@ class CalcAnalyzer(MSONable):
             None. The ce_data file will be updated.
 
         """
+        print("Loading data from {}".format(self.vaspdir))
+        self._load_data()
         print("Updating cluster expansion.")
         #Use crystal nearest neighbor analyzer to find nearest neighbor distance, and set cluster radius according to it.
         
@@ -333,3 +336,87 @@ class CalcAnalyzer(MSONable):
             #json.dump(d,Fout)
             # For any msonable, use dumpfn to save your time!
         dumpfn(self.ECIG,self.ce_file)    
+    
+    @classmethod
+    def from_settings(cls,setting_file='analyzer_settings.mson'):
+        if os.path.isfile(setting_file):
+            with open(setting_file,'r') as fs:
+                settings = json.load(fs)
+        else:
+            settings = {}
+        return cls.from_dict(settings)
+
+    @classmethod
+    def from_dict(cls,settings):
+        if 'vaspdir' in settings: vaspdir = settings['vaspdir']; 
+        else: vaspdir = 'vasp_run';
+    
+        if 'prim_file' in settings: prim_file = settings['prim_file'];
+        else: prim_file = 'prim.cif';
+    
+        if 'calc_data_file' in settings: calc_data_file = settings['calc_data_file'];
+        else: calc_data_file = 'calcdata.mson';
+    
+        if 'ce_file' in settings: ce_file = settings['ce_file'];
+        else: ce_file = 'ce.mson';
+    
+        if 'ce_radius' in settings: ce_radius = settings['ce_radius'];
+        else: ce_radius = None;
+    
+        if 'max_de' in settings: max_de = settings['max_de'];
+        else: max_de = 100;
+    
+        if 'max_ew' in settings: max_ew = settings['max_ew'];
+        else: max_ew = 3;
+    
+        if 'sm_type' in settings: sm_type = settings['sm_type'];
+        else: sm_type = 'pmg_sm';
+    
+        if 'ltol' in settings: ltol = settings['ltol'];
+        else: ltol = 0.2;
+    
+        if 'stol' in settings: stol = settings['stol'];
+        else: stol = 0.15;
+    
+        if 'angle_tol' in settings: angle_tol = settings['angle_tol'];
+        else: angle_tol = 5;
+    
+        if 'vor_tol' in settings: vor_tol = settings['vor_tol'];
+        else: vor_tol = 1e-3;
+
+        if 'solver' in settings: solver = settings['solver'];
+        else: solver = 'cvxopt_l1';
+
+        if 'basis' in settings: basis = settings['basis'];
+        else: basis = '01';
+
+        if 'weight' in settings: weight = settings['weight'];
+        else: weight = 'unweighted'
+
+        return cls(vaspdir=vaspdir,prim_file=prim_file,calc_data_file=calc_data_file,ce_file = ce_file, ce_radius=ce_radius,\
+                   max_de = max_de, max_ew = max_ew, sm_type = sm_type, ltol = ltol, stol = stol, angle_tol = angle_tol,\
+                   vor_tol = vor_tol, solver = solver, basis = basis, weight = weight)
+
+    def as_dict(self):
+        settings = {}
+        settings['vaspdir'] = self.vaspdir
+        settings['prim_file'] = self.prim_file
+        settings['calc_data_file'] = self.calc_data_file
+        settings['ce_file'] = self.ce_file
+        settings['ce_radius'] = self.ce_radius
+        settings['max_de'] = self.max_de
+        settings['max_ew'] = self.max_ew
+        settings['sm_type'] = self.sm_type
+        settings['ltol'] = self.ltol
+        settings['stol'] = self.stol
+        settings['angle_tol'] = self.angle_tol
+        settings['vor_tol'] = self.vor_tol
+        settings['solver'] = self.solver
+        settings['basis'] = self.basis
+        settings['weight'] = self.weight
+        return settings
+    
+    def write_settings(self,settings_file='analyzer_settings.mson'):
+        print('Writing anlyzer settings to {}'.format(settings_file))
+        with open(settings_file,'w') as fout:
+            json.dump(self.as_dict(),fout)
