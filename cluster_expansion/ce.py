@@ -14,7 +14,7 @@ from global_tools import *
 import itertools
 import numpy as np
 
-from ce_utils import delta_corr_single_flip
+from cluster_expansion.ce_utils import delta_corr_single_flip
 
 SITE_TOL = 1e-6
 
@@ -322,9 +322,11 @@ class ClusterExpansion(object):
                                    angle_tol=self.angle_tol)
         elif self.sm_type == 'an_dmap':
             try:
-                from delauney_matcher import *
+                from delauney_matcher import DelauneyMatcher
                 self.sm = DelauneyMatcher(vor_tol=self.vor_tol)
             # At leaset three methods are required in Delauney Matcher: match, mapping and supercell matrix finding.
+            except:
+                pass
         else:
             raise ValueError('Structure matcher not implemented!')
 
@@ -515,11 +517,15 @@ class ClusterExpansion(object):
             clusters[int(k)] = [SymmetrizedCluster(Cluster.from_dict(c[0]), c[1], symops) for c in v]
         return cls(structure=Structure.from_dict(d['structure']),
                    expansion_structure=Structure.from_dict(d['expansion_structure']),
-                   clusters=clusters, symops=symops, sm_type = d['sm_type'],
-                   ltol=d['ltol'], stol=d['stol'], angle_tol=d['angle_tol'],vor_tol = d['vor_tol'],
+                   clusters=clusters, symops=symops, 
+                   sm_type = d['sm_type'] if 'sm_type' in d else 'pmg_sm',
+                   ltol=d['ltol'], stol=d['stol'], angle_tol=d['angle_tol'],
+                   vor_tol = d['vor_tol'] if 'vor_tol' in d else 1e-3,
                    supercell_size=d['supercell_size'],
                    use_ewald=d['use_ewald'], use_inv_r=d['use_inv_r'],
-                   eta=d['eta'],basis=d['basis'])
+                   eta=d['eta'],
+                   basis=d['basis'] if 'basis' in d else '01')
+    # Compatible with old datas
 
     def as_dict(self):
         c = {}
@@ -529,7 +535,7 @@ class ClusterExpansion(object):
                 'expansion_structure': self.expansion_structure.as_dict(),
                 'symops': [so.as_dict() for so in self.symops],
                 'clusters_and_bits': c,
-                'sm_type': self.sm_type
+                'sm_type': self.sm_type,
                 'ltol': self.ltol,
                 'stol': self.stol,
                 'angle_tol': self.angle_tol,

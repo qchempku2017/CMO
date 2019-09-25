@@ -11,6 +11,9 @@ See specific notes in the gs_preserve_fit function.
 The code runs and seems to give results that are reasonable with the underlying math, but it has NOT BEEN TESTED
 EXTENSIVELY ENOUGH FOR PRODUCTION and there are I think serious problems with the underlying algorithm that need to
 be resolved before the gs_preservation routine will be of use for practical work.
+
+2019-09-24 - Notes from Fengyu Xie (fengyu_xie@berkeley.edu)
+This version added a new fitting method to implement the l1/l0 method by Wenxuan Huang in 2018. Gurobi licence required!
 """
 
 import os
@@ -22,8 +25,8 @@ from itertools import chain
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen import Composition, Structure
 from pymatgen.analysis.phase_diagram import PhaseDiagram, PDEntry
-from compressive.bregman import split_bregman #split bregman not needed if using gs_preserve or cvxopt_l1
-from ce import ClusterExpansion
+from cluster_expansion.compressive.bregman import split_bregman #split bregman not needed if using gs_preserve or cvxopt_l1
+from cluster_expansion.ce import ClusterExpansion
 
 from matplotlib import pylab as plt
 
@@ -32,6 +35,8 @@ import numpy as np
 import numpy.linalg as la
 import json
 from copy import deepcopy
+
+from gurobi import *
 
 def _pd(structures, energies, ce):
     """
@@ -191,30 +196,95 @@ class EciGenerator(object):
         logging.info("Matched {} of {} structures".format(len(self.items),
                                                           len(structures)))
 
-        # do least squares for comparison
-        x = np.linalg.lstsq(self.feature_matrix, self.normalized_energies)[0]
-        ls_err = np.dot(self.feature_matrix, x) - self.normalized_energies
-        logging.info('least squares rmse: {}'.format(np.sqrt(np.sum(ls_err ** 2) / len(self.feature_matrix))))
+        # do least squares for comparison. Not very useful. Muted, added as a fitting method instead.
+        # x = np.linalg.lstsq(self.feature_matrix, self.normalized_energies,rcond=None)[0]
+        # ls_err = np.dot(self.feature_matrix, x) - self.normalized_energies
+        # logging.info('least squares rmse: {}'.format(np.sqrt(np.sum(ls_err ** 2) / len(self.feature_matrix))))
 
         # calculate optimum mu
-        self.mu = mu or self.get_optimum_mu(self.feature_matrix, self.normalized_energies, self.weights)
-        #self.mu = 395.6
-        print("mu: {}".format(self.mu))
+        self.mu = mu 
+        self.ecis = np.array(ecis)
+        self._cv = None
+        self._rmse = None
+
+        if self.mu is None or self.ecis is None:
+            logging.warn('Model not generated yet. Call self.generate().')   
+            #print('Model not generated yet. Call self.generate().')   
+
+
+#### Important update: ecis no longer generated in __init__. Call this ####
+#### to generate ecis ####
+    def generate(self):
+        if self.mu is None:
+            print('Finding optimum mu')
+            self.mu = self.get_optimum_mu(self.feature_matrix, self.normalized_energies, self.weights)
+            logging.info("Opt mu: {}".format(self.mu))
+            i_opt,j_opt = np.unravel_index(np.argmax(np.array(self.cvs), axis=None), np.array(self.cvs).shape)
+            logging.info("Opt cv: {}".format(self.cvs[i_opt][j_opt]))
         # actually fit the cluster expansion
-        if ecis is None:
+        else:
+            print('By default, using existing mu')
+
+        if self.ecis is None:
             print("Doing actual fit")
             self.ecis = self._fit(self.feature_matrix, self.normalized_energies, self.weights, self.mu)
         else:
-            self.ecis = np.array(ecis)
+            print('By default, using existing fit')
+            self.ecis = np.array(self.ecis)
 
         # calculate the results of the fitting
-        self.normalized_ce_energies = np.dot(self.feature_matrix, self.ecis)
-        self.ce_energies = self.normalized_ce_energies * self.sizes
-        self.normalized_error = self.normalized_ce_energies - self.normalized_energies
 
-        self.rmse = np.average(self.normalized_error ** 2) ** 0.5
-        logging.info('rmse (in-sample): {}'.format(self.rmse))
-        #logging.info('expected CVS:: {}'.format(self.cvs))
+        logging.info('rmse (in-sample): {}, cv score(5 fold): {}, mu_opt: {}'.format(self.rmse,self.cv,self.mu))
+        #logging.info('best CV score: {}'.format(np.nanargmax(self.cvs)))
+
+    @property
+    def normalized_ce_energies(self): 
+        return np.dot(self.feature_matrix, self.ecis)
+
+    @property
+    def ce_energies(self): 
+        return self.normalized_ce_energies * self.sizes
+
+    @property
+    def normalized_error(self):
+        return self.normalized_ce_energies - self.normalized_energies
+    
+    @property
+    def rmse(self):
+        if self._rmse is None:
+            self._rmse= np.average(self.normalized_error ** 2) ** 0.5
+        return self._rmse
+
+    @property
+    def cv(self,k=5):
+        if self._cv is None:
+            A = self.feature_matrix
+            f = self.normalized_energies
+            weights = self.weights
+            mu = self.mu
+
+            partitions = np.tile(np.arange(k), len(f)//k+1)
+            np.random.shuffle(partitions)
+            partitions = partitions[:len(f)]
+
+            ssr = 0
+            ssr_uw = 0
+            for i in range(k):
+                ins = (partitions != i) #in the sample for this iteration
+                oos = (partitions == i) #out of the sample for this iteration
+
+                mapping = {}
+                for i in range(len(f)):
+                    if ins[i]:
+                        mapping[len(mapping.keys())] = i
+
+                ecis = self._fit(A[ins], f[ins], weights[ins], mu, subset_mapping=mapping, skip_gs=True)
+                res = (np.dot(A[oos], ecis) - f[oos]) ** 2
+                ssr += np.sum(res * weights[oos]) / np.average(weights[oos])
+                ssr_uw += np.sum(res)
+
+            self. _cv = 1 - ssr / np.sum((f - np.average(f)) ** 2)
+        return self._cv
 
     @property
     def structures(self):
@@ -311,27 +381,84 @@ class EciGenerator(object):
         """
         Finds the value of mu that maximizes the cv score
         """
-        mus = list(np.logspace(min_mu, max_mu, 10))
-        cvs = [self._calc_cv_score(mu, A, f, weights, k) for mu in mus]
-        
-        for _ in range(3):
-            i = np.nanargmax(cvs)
-            if i == len(mus)-1:
-                warnings.warn('Largest mu chosen. You should probably increase the basis set')
-                break
-            
-            mu = (mus[i] * mus[i+1]) ** 0.5
-            mus[i+1:i+1] = [mu]
-            cvs[i+1:i+1] = [self._calc_cv_score(mu, A, f, weights, k)]
-            
-            mu = (mus[i-1] * mus[i]) ** 0.5
-            mus[i:i] = [mu]
-            cvs[i:i] = [self._calc_cv_score(mu, A, f, weights, k)]
+        if self.solver == 'lstsq':
+            assert A.shape[0]>A.shape[1]
+            mu = 0
+            self.cvs = [self._calc_cv_score(mu,A,f,weights,k=5)]
+            return 0
 
-        self.mus = mus
-        self.cvs = cvs
-        logging.info('best cv score: {}'.format(np.nanmax(self.cvs)))
-        return mus[np.nanargmax(cvs)]
+        elif self.solver!='l1l0':
+            mus = list(np.logspace(min_mu, max_mu, 10))
+            cvs = [self._calc_cv_score(mu, A, f, weights, k) for mu in mus]
+            
+            for it in range(3):
+                i = np.nanargmax(cvs)
+                if i == len(mus)-1:
+                    if it ==0:
+                        warnings.warn('Largest mu chosen. You should probably increase the basis set')
+                    break
+                
+                mu = (mus[i] * mus[i+1]) ** 0.5
+                mus[i+1:i+1] = [mu]
+                cvs[i+1:i+1] = [self._calc_cv_score(mu, A, f, weights, k)]
+                
+                mu = (mus[i-1] * mus[i]) ** 0.5
+                mus[i:i] = [mu]
+                cvs[i:i] = [self._calc_cv_score(mu, A, f, weights, k)]
+        
+            self.mus = mus
+            self.cvs = cvs
+            logging.info('best cv score: {}'.format(np.nanmax(self.cvs)))
+            return mus[np.nanargmax(cvs)]
+
+        else:
+            mu0s = list(np.logspace(-2, 1, 4))
+            mu1s = list(np.logspace(-5, -2,6)) # Based on Wenxuan's empirical values.
+            cvs_cur = []
+            mus_cur = []
+
+            for it in range(2):
+                # Considering computational need, only fine grain the local area once.
+                cvs = []
+                mus = []
+                for i in range(len(mu0s)):
+                    cvs_i = []
+                    mus_i = []
+                    for j in range(len(mu1s)):
+                        mu = [mu0s[i],mu1s[j]]
+                        cv = self._calc_cv_score(mu,A,f,weights,k)
+                        cvs_i.append(cv)
+                        mus_i.append(mu)
+                        #print('current mu: {}, current cv: {}'.format(mu,cv))
+                    cvs.append(cvs_i)
+                    mus.append(mus_i)
+                cvs_cur = cvs
+                mus_cur = mus
+
+                i,j = np.unravel_index(np.argmax(np.array(cvs), axis=None), np.array(cvs).shape)
+                if i == len(mu0s)-1:
+                    if it==0:
+                        warnings.warn('Largest mu0 chosen. You should probably increase the basis set')
+                    break
+                if j == len(mu1s)-1:
+                    if it==0:
+                        warnings.warn('Largest mu0 chosen. You should probably increase the basis set')
+                    break
+                
+                mu0_min = mu0s[i-1] if i else mu0s[i]
+                mu0_max = mu0s[i+1]
+                mu1_min = mu1s[i-1] if i else mu1s[i]
+                mu1_max = mu1s[i+1]
+                p = np.log(10)        
+                mu0s = list(np.logspace(np.log(mu0_min)/p,np.log(mu0_max)/p,4))
+                mu1s = list(np.logspace(np.log(mu1_min)/p,np.log(mu1_max)/p,6))
+                
+            self.mus = mus_cur
+            self.cvs = cvs_cur
+            #print('cvs:',self.cvs,'\nmus:',self,mus)
+            i_opt,j_opt = np.unravel_index(np.argmax(np.array(self.cvs), axis=None), np.array(self.cvs).shape)
+            logging.info('best cv score: {}'.format(self.cvs[i_opt][j_opt]))
+            return self.mus[i_opt][j_opt]
 
     def _calc_cv_score(self, mu, A, f, weights, k=5):
         """
@@ -404,12 +531,16 @@ class EciGenerator(object):
             return self._solve_bregman(A_w, f_w, mu)
         elif self.solver == 'gs_preserve':
             return self._solve_gs_preserve(A_w, f_w, mu, subsample_mapping=subset_mapping, skip_gs=skip_gs)
+        elif self.solver == 'l1l0':
+            return self._solve_l1l0(A_w, f_w, mu[0], mu[1])
+        elif self.solver == 'lstsq':
+            return np.linalg.lstsq(A_w, f_w,rcond=None)[0]
 
     def _solve_cvxopt(self, A, f, mu):
         """
         A and f should already have been adjusted to account for weighting
         """
-        from l1regls import l1regls, solvers
+        from cluster_expansion.compressive.l1regls import l1regls, solvers
         solvers.options['show_progress'] = False
         from cvxopt import matrix
         A1 = matrix(A)
@@ -418,6 +549,42 @@ class EciGenerator(object):
 
     def _solve_bregman(self, A, f, mu):
         return split_bregman(A, f, MaxIt=1e5, tol=1e-7, mu=mu, l=1, quiet=True)
+
+    def _solve_l1l0(self,A,f,mu0,mu1,M=100.0,cutoff=300):
+        """
+        Brute force solving by gurobi. Cutoff in 300s.
+        """
+        n = A.shape[0]
+        d = A.shape[1]
+        ATA = A.T @ A
+        fTA = f.T @ A
+        
+        l1l0 = Model()
+        w = l1l0.addVars(d,lb=-GRB.INFINITY,ub=GRB.INFINITY)
+        z0 = l1l0.addVars(d,vtype=GRB.BINARY)
+        z1 = l1l0.addVars(d)
+        for i in range(d):
+            l1l0.addConstr(M*z0[i]>=w[i])
+            l1l0.addConstr(M*z0[i]>=(-1.0*w[i]))
+            l1l0.addConstr(z1[i]>=w[i])
+            l1l0.addConstr(z1[i]>=(-1.0*w[i]))
+        # Cost function
+        L = QuadExpr()
+        for i in range(d):
+            L = L+mu0*z0[i]
+            L = L+mu1*z1[i]
+            L = L-2*fTA[i]*w[i]
+            for j in range(d):
+                L = L+w[i]*w[j]*ATA[i][j]
+
+        l1l0.setObjective(L,GRB.MINIMIZE)
+        l1l0.setParam(GRB.Param.TimeLimit, cutoff)
+        l1l0.setParam(GRB.Param.OutputFlag, 0)
+        # Using the default algorithm, and shut gurobi up.
+        l1l0.update()
+        l1l0.optimize()
+        w_opt = np.array([w[v_id].x for v_id in w])
+        return w_opt
 
     def _solve_gs_preserve(self, A, f, mu, subsample_mapping, skip_gs=False):
         """
@@ -747,12 +914,15 @@ class EciGenerator(object):
 
     @classmethod
     def from_dict(cls, d):
-        return cls(cluster_expansion=ClusterExpansion.from_dict(d['cluster_expansion']),
+        generator = cls(cluster_expansion=ClusterExpansion.from_dict(d['cluster_expansion']),
                    structures=[Structure.from_dict(s) for s in d['structures']],
                    energies=np.array(d['energies']), max_dielectric=d.get('max_dielectric'),
                    max_ewald=d.get('max_ewald'), supercell_matrices=d['supercell_matrices'],
                    mu=d.get('mu'), ecis=d.get('ecis'), feature_matrix=d.get('feature_matrix'),
-                   solver=d.get('solver', 'cvxopt_l1'), weights=d['weights'])
+                   solver=d.get('solver'), weights=d['weights'])
+        if 'cv' in d: generator._cv = d['cv']
+        if 'rmse' in d: generator._rmse = d['rmse']
+        return generator
 
     def as_dict(self):
         return {'cluster_expansion': self.ce.as_dict(),
@@ -766,5 +936,7 @@ class EciGenerator(object):
                 'feature_matrix': self.feature_matrix.tolist(),
                 'weights': self.weights.tolist(),
                 'solver': self.solver,
+                'cv': self.cv,
+                'rmse': self.rmse,
                 '@module': self.__class__.__module__,
                 '@class': self.__class__.__name__}

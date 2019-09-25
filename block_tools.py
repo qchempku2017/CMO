@@ -260,6 +260,7 @@ class CEBlock(object):
             m = Model("lambda-solving")
             lambdas = m.addVars(self._num_of_lambdas,ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
             E = m.addVar(vtype=GRB.CONTINUOUS,name="E",lb=-GRB.INFINITY, ub=GRB.INFINITY)
+            m.update()
             m.setObjective(E,GRB.MAXIMIZE)
    
             # weight of all original clusters shouldn't be less than 0. 'Hard' constraints.
@@ -268,15 +269,17 @@ class CEBlock(object):
             for hard in all_hard:
                 #print("Hard:\n",hard)
                 m.addConstr(hard<=1.0)
+                m.update()
 
             # E = sum(J*Clus), to maximize E, use E-sum(J*clus)<=0, 'soft' constraints.
             for config in self._configs:
                 soft_expr = self._config_to_soft_expression(config,lambdas)
                 #print("Soft:\n",soft_expr)
                 m.addConstr(E<=soft_expr)
+                m.update()
             
             m.optimize()
-            self._lambda_param = [v.x for v in m.getVars() if v.varName != "E"]
+            self._lambda_param = [lambdas[v_id].x for v_id in lambdas]
             blkenergy = m.objVal
             if self._blkenergy:
                 if abs(self._blkenergy-blkenergy)<0.001:
