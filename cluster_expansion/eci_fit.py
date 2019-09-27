@@ -582,7 +582,7 @@ class EciGenerator(object):
 
         l1l0.setObjective(L,GRB.MINIMIZE)
         l1l0.setParam(GRB.Param.TimeLimit, cutoff)
-        l1l0.setParam(GRB.Param.PSDTol,1e-4) # Set a larger PSD tolerance to ensure success
+        l1l0.setParam(GRB.Param.PSDTol,1e-5) # Set a larger PSD tolerance to ensure success
         l1l0.setParam(GRB.Param.OutputFlag, 0)
         # Using the default algorithm, and shut gurobi up.
         l1l0.update()

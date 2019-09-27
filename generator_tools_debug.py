@@ -72,7 +72,7 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
         selected_scs=[mat_mul(sc,transmat) for sc in selected_scs]
     return selected_scs
 
-def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[500, 1500, 10000],compaxis=None,n_select=1):
+def _get_mc_structs(SCLst,ce_file='ce.mson',Prim=None,TLst=[500, 1500, 10000],compaxis=None,n_select=1):
     '''This function checks the previous calculation directories when called. If no previous calculations, it
        generates the intial pool. If there are previous calculations, add new sampled structures based on 
        structure selection rule.
@@ -276,7 +276,9 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
     #     unique_structs = _Structure_selection(unique_structs,n_select) 
     # else:
     #     print("Initial set generation task.")   
+    return unique_structs
 
+def _write_mc_structs(unique_structs,outdir='vasp_run'):
     # Save structures
     print('#### MC Final Saving ####')
     if not os.path.isdir(outdir):
@@ -306,10 +308,9 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
             if not os.path.isdir(structDir): os.mkdir(structDir)
             Poscar(struct.get_sorted_structure()).write_file(os.path.join(structDir,'POSCAR'))
         RO_id += 1
-
     print('Saving of %s successful. Writing VASP input files later.'%outdir)
 
-def _gen_vasp_inputs(SearchDir,functional='PBE', num_kpoints=25,add_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
+def _gen_vasp_inputs(SearchDir='vasp_run',functional='PBE', num_kpoints=25,add_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
     """
     Search through directories, find POSCARs and generate FM VASP inputs.
     """
@@ -567,6 +568,7 @@ class StructureGenerator(MSONable):
 
     @property
     def sc_ro(self):
+        # Enumerated supercells and compositions.
         if not self._sc_ro:
             self._sc_ro =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
                                         self.sample_step, self.sc_selec_num, self.transmat,self.n_select)
@@ -574,10 +576,12 @@ class StructureGenerator(MSONable):
     #Share the same set of sc_ro across project.
 
     def generate_structures(self):
-        _get_mc_structs(self.sc_ro,ce_file=self.ce_file,outdir=self.outdir,Prim=self.prim,TLst=[500, 1500, 10000],\
+        self._unique_structs = _get_mc_structs(self.sc_ro,ce_file=self.ce_file,Prim=self.prim,TLst=[500, 1500, 10000],\
                             compaxis= self.comp_axis)
+        _write_mc_structs(self._unique_structs,outdir=self.outdir)
+        self._write_vasp_inputs()
 
-    def write_structures(self):
+    def _write_vasp_inputs(self):
         if self.vasp_settings:
             if 'functional' in self.vasp_settings:
                 functional = self.vasp_settings['functional']
