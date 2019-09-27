@@ -14,6 +14,12 @@ be resolved before the gs_preservation routine will be of use for practical work
 
 2019-09-24 - Notes from Fengyu Xie (fengyu_xie@berkeley.edu)
 This version added a new fitting method to implement the l1/l0 method by Wenxuan Huang in 2018. Gurobi licence required!
+Also I redifined the space group analysis as a class property, and moved the fitting functions from __init__() to a 
+separated method generate() to expedite initialization.
+
+Least square fit no longer generated in __init__. It will be considered as a separated solver 'lstsq'.
+
+Some grammatic inadequancies are also corrected. Such as supercell_matrices = supercell_matrices or [[None]*...]
 """
 
 import os
@@ -143,10 +149,13 @@ class EciGenerator(object):
         self.solver = solver
         self.max_dielectric = max_dielectric
         self.max_ewald = max_ewald
-        
+
+        # Match all input structures to cluster expansion
         self.items = []
-        supercell_matrices = supercell_matrices or [None] * len(structures)
-        fm_rows = feature_matrix or [None] * len(structures)
+        #print("Got {} structures".format(len(structures)))
+        
+        supercell_matrices = supercell_matrices if supercell_matrices is not None else [None] * len(structures)
+        fm_rows = feature_matrix if feature_matrix is not None else [None] * len(structures)
         for s, e, m, w, fm_row in zip(structures, energies, supercell_matrices, weights, fm_rows):
             try:
                 # TODO: Caching m and sc speeds up load times a lot
@@ -193,7 +202,6 @@ class EciGenerator(object):
         logging.info("Matched {} of {} structures".format(len(self.items),
                                                           len(structures)))
 
-
         # do least squares for comparison. Not very useful. Muted, added as a fitting method instead.
         # x = np.linalg.lstsq(self.feature_matrix, self.normalized_energies,rcond=None)[0]
         # ls_err = np.dot(self.feature_matrix, x) - self.normalized_energies
@@ -201,9 +209,10 @@ class EciGenerator(object):
 
         # calculate optimum mu
         self.mu = mu 
-        self.ecis = np.array(ecis) if ecis is not None else None
+        self.ecis = np.array(ecis)
         self._cv = None
         self._rmse = None
+        self._spacegroups = None
 
         if self.mu is None or self.ecis is None:
             logging.warn('Model not generated yet. Call self.generate().')   
@@ -216,7 +225,9 @@ class EciGenerator(object):
         if self.mu is None:
             print('Finding optimum mu')
             self.mu = self.get_optimum_mu(self.feature_matrix, self.normalized_energies, self.weights)
-            logging.info("Opt mu: {}".format(self.mu))              
+            logging.info("Opt mu: {}".format(self.mu))
+            i_opt,j_opt = np.unravel_index(np.argmax(np.array(self.cvs), axis=None), np.array(self.cvs).shape)
+            logging.info("Opt cv: {}".format(self.cvs[i_opt][j_opt]))
         # actually fit the cluster expansion
         else:
             print('By default, using existing mu')
@@ -309,10 +320,12 @@ class EciGenerator(object):
     @property
     def normalized_energies(self):
         return self.energies / self.sizes
-
+    
     @property
-    def spacegroups(self): 
-        return [SpacegroupAnalyzer(s,symprec=1e-1).get_space_group_symbol() for s in self.structures]
+    def spacegroups(self):
+        if self._spacegroups is None: 
+            self._spacegroups=[SpacegroupAnalyzer(s,symprec=1e-1).get_space_group_symbol() for s in structures]
+        return self._spacegroups
 
     @classmethod
     def unweighted(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,
@@ -412,12 +425,12 @@ class EciGenerator(object):
             return mus[np.nanargmax(cvs)]
 
         else:
-            mu0s = list(np.logspace(-4, 1, 6))
-            mu1s = list(np.logspace(-6, -1, 6)) # Based on Wenxuan's empirical values.
+            mu0s = list(np.logspace(-2, 1, 4))
+            mu1s = list(np.logspace(-5, -2,6)) # Based on Wenxuan's empirical values.
             cvs_cur = []
             mus_cur = []
 
-            for it in range(3):
+            for it in range(2):
                 # Considering computational need, only fine grain the local area once.
                 cvs = []
                 mus = []
@@ -426,13 +439,10 @@ class EciGenerator(object):
                     mus_i = []
                     for j in range(len(mu1s)):
                         mu = [mu0s[i],mu1s[j]]
-                        try:
-                            cv = self._calc_cv_score(mu,A,f,weights,k)
-                        except:
-                            cv = -np.inf
-                            #solution failed because of numerical instability
+                        cv = self._calc_cv_score(mu,A,f,weights,k)
                         cvs_i.append(cv)
                         mus_i.append(mu)
+                        #print('current mu: {}, current cv: {}'.format(mu,cv))
                     cvs.append(cvs_i)
                     mus.append(mus_i)
                 cvs_cur = cvs
@@ -582,7 +592,6 @@ class EciGenerator(object):
 
         l1l0.setObjective(L,GRB.MINIMIZE)
         l1l0.setParam(GRB.Param.TimeLimit, cutoff)
-        l1l0.setParam(GRB.Param.PSDTol,1e-4) # Set a larger PSD tolerance to ensure success
         l1l0.setParam(GRB.Param.OutputFlag, 0)
         # Using the default algorithm, and shut gurobi up.
         l1l0.update()
