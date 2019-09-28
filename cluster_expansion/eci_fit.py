@@ -412,8 +412,8 @@ class EciGenerator(object):
             return mus[np.nanargmax(cvs)]
 
         else:
-            mu0s = list(np.logspace(-4, 1, 6))
-            mu1s = list(np.logspace(-6, -1, 6)) # Based on Wenxuan's empirical values.
+            mu0s = list(np.logspace(-5,-2, 6))
+            mu1s = list(np.logspace(-2, 1, 4)) # Based on Wenxuan's empirical values.
             cvs_cur = []
             mus_cur = []
 
