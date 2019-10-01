@@ -254,8 +254,8 @@ class GScanonical(MSONable):
                     else:
                         #When using inv_r, an independent ewald sum is generated for each specie-specie pair, and the sums are
                         #considered components of corr
-                        N_sp = sum([len(site.species_and_occu) for site in clus_sup.supercell])
-                        N_eweci = N_sp+N_sp*(N_sp-1)//2
+                        N_sp = sum([len(site.species_and_occu) for site in clus_sup.cluster_expansion.structure])
+                        N_eweci = 1+N_sp+N_sp*(N_sp-1)//2
                         eci_ew = eci[-N_eweci:]
                         
                         equiv_sites = []
