@@ -171,9 +171,9 @@ class StructureSelector():
         
         return selected_ids
             
-    def select_new(self, old_pool, new_pool, num_probe = 1):
+    def select_new(self, old_pool, new_pool, n_probe = 1):
         """
-        Having an existing pool, select the best num_probe structures from a new pool.
+        Having an existing pool, select the best n_probe structures from a new pool.
         Does not deduplicate. Do that before selection!
         """
 
@@ -204,7 +204,7 @@ class StructureSelector():
 
         indices = np.argsort(reduction)
 
-        return indices[:num_probe]
+        return indices[:min(n_probe,len(indices))]
 
     def CX_selection(self, feature_matrix, n_init=10):
                       
@@ -218,7 +218,7 @@ class StructureSelector():
         trial_indices = []
         total_indices = [i for i in range(A.shape[0])]
 
-        for n in range(self.n_step,n_init,self.n_step):
+        for n in range(self.n_step,min(n_init,A.shape[0]),self.n_step):
 
             error = np.linalg.norm(origin_A)*10000
             return_indices_step = None
@@ -254,7 +254,7 @@ class StructureSelector():
         trial_indices = []
         total_indices = [i for i in range(A.shape[0])]
 
-        for n in range(self.n_step,n_init,self.n_step):
+        for n in range(self.n_step,min(n_init,A.shape[0]),self.n_step):
 
             error = np.linalg.norm(origin_A)*10000
             return_indices_step = None

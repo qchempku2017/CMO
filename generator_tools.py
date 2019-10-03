@@ -35,6 +35,7 @@ import collections
 
 from cluster_expansion.mc import *
 from global_tools import *
+from selector_tools import *
 
 ##################################
 ## Less general tools that are not cross refered by other modules
@@ -72,7 +73,10 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
         selected_scs=[mat_mul(sc,transmat) for sc in selected_scs]
     return selected_scs
 
-def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[500, 1500, 10000],compaxis=None,n_select=1):
+def _was_generated(x):
+    return 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
+
+def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=None):
     '''This function checks the previous calculation directories when called. If no previous calculations, it
        generates the intial pool. If there are previous calculations, add new sampled structures based on 
        structure selection rule.
@@ -86,15 +90,10 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
        compaxis: a list of compound names. If specified, the program will caculate the composition in compound ratio,
                 but ususally not used since we don't think its necessary nor applicable in complexed disordered 
                 rocksalt systems.
-       n_select: if previous calculations exist, choose n_select unique structures from unique_structures based on 
-                serial structure selection rule. default = 1.
-
     '''
     print('#### MC Initialization ####')
     calculated_structures = {}
-    calculated_max_ids = {}
 
-    _was_generated = lambda x: 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
     if os.path.isdir(outdir):
         print("Checking previously enumerated structures.")
         for root,dirs,files in os.walk(outdir):
@@ -107,27 +106,9 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
                     calculated_structures[RO_old_string]=[]
                 calculated_structures[RO_old_string].append(Poscar.from_file(os.path.join(root,'POSCAR').structure))
                 struct_id = int(root.split(os.sep[-1]))
-                if RO_old_string not in calculated_max_ids:
-                    calculated_max_ids[RO_old_string]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
     else: 
         print("No previous calculations, generating the intial pool.")
  
-    if ce_file and os.path.isfile(ce_file):
-        # Load cluster expansion
-        with open(ce_file,'r') as Fid: cedata = json.load(Fid);
-        CE=ClusterExpansion.from_dict(cedata['cluster_expansion']); 
-        ECIs=cedata['ecis']; 
-        print('Previous CE information:'); print(ce.structure);
-        Prim = ce.structure
-
-    else:
-        # No existing cluster expansion, we are building form start - use electrostatics only
-        print("Not checking previous cluster expansion, using ewald as sampling criteria.")
-        CE=ClusterExpansion.from_radii(Prim,{2: 1},ltol=0.3,stol=0.2,angle_tol=2,\
-                                       supercell_size='num_sites',use_ewald=True,use_inv_r=False,eta=None);
-        ecis=np.zeros(CE.n_bit_orderings+1); ecis[-1]=1;
-        print('Primitive cell read from CIF file:\n',Prim)
-
     mc_structs={};
     if compaxis:
         ro_axis_strings = {}
@@ -136,17 +117,9 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
     for SC,RO,sites_WorthToExpand in SCLst:
         print("Processing composition:\n",RO,'\nSupercell:\n',SC,'\nsize:\n',int(round(np.abs(np.linalg.det(SC)))))
         clusSC=CE.supercell_from_matrix(SC);
-        #print(clusSC.supercell)
-        #print(clusSC.bits)
-        # Define cation/anion sublattices
-        #ions=[]
-        #for sublat in RO:
-        #    for specie in sublat:
-        #        if specie not in ions: ions.append(specie)
 
         Bits=clusSC.bits;
         scs = int(round(np.abs(np.linalg.det(SC))))
-        #print('supercell',clusSC.supercell)
         # generate a list of groups of sites to swap between! We have known which sites are partially occupied,
         # so we only need to figure out how pymatgen make a group of supercell sites from a primitive cell site.
         # Looks like it simply just replicate sites one by one! 
@@ -167,21 +140,11 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
 
         randStr.make_supercell(SC)
 
-        #print('randStr',randStr)
-        #print('RO',RO);
-        #print('indGrps',indGrps)
-
-        # A lot of things crash is the structure is actually ordered and the MC has zero degrees of freedom
-        # If strange errors come up in this section, thats probably the cause - sometimes due to roundoff
-        # error, this check thinks the structure isnt ordered, while in reality is it, and then stuff crashes
-        # Currently, checks if the composition is actually LiF or MnO and doesnt run MC on that
-        #if np.abs(xf - 1.0) > 0.001 and np.abs(xm2 - 1.0) > 0.001:
         randStr =order.apply_transformation(randStr)
-        #print('randStr:',randStr)
-        #print('ceStr:',clusSC.supercell)
+
         # Simulated annealing for better guess at ground state
         # You may want to change the number of MC flips for each temperature
-        #print(type(clusSC))
+
         init_occu = clusSC.occu_from_structure(randStr)
         # print("Starting occupation:", randStr)
         sa_occu = simulated_anneal(ecis=ecis, cluster_supercell=clusSC, occu=init_occu, ind_groups=indGrps,
@@ -198,7 +161,6 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
             sp_list.extend(site_occu.values())
         _gcd = GCD_List(sp_list)
         RO_reduced_int=[{sp:site_occu[sp]//_gcd for sp in site_occu} for site_occu in RO_int]
-
 
         #Reduce occupation numbers by GCD.
         RO_string = json.dumps(RO_reduced_int)
@@ -270,19 +232,26 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
                 unqCnt += 1
     print('Obtained %d unique occupied random structures.'%unqCnt)
 
-    # Selection rule (Ask from Peichen):
-    # if len(calculate_structures):
-    #     print("Structure selection task.") 
-    #     unique_structs = _Structure_selection(unique_structs,n_select) 
-    # else:
-    #     print("Initial set generation task.")   
+    return unique_structs
 
+def _write_mc_structs(unique_structs,outdir='vasp_run'):
     # Save structures
     print('#### MC Final Saving ####')
     if not os.path.isdir(outdir):
         os.mkdir(outdir)
         print(outdir,' does not exist. Created.')
 
+    calculated_max_ids = {}
+    if os.path.isdir(outdir):
+        for root,dirs,files in os.walk(outdir):
+            if _was_generated(files):
+                parentdir = os.path.join(*root.split(os.sep)[0:-1])
+                with open(os.path.join(parentdir,'composition_by_site')) as RO_file:
+                    RO_old = json.load(RO_file)
+                    RO_old_string = json.dumps(RO_old)
+                if RO_old_string not in calculated_max_ids:
+                    calculated_max_ids[RO_old_string]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
+ 
     RO_id = 0
     for RO_string,structs in unique_structs.items():
         RODir = 'Composition{}'.format(RO_id)
@@ -306,10 +275,9 @@ def _get_mc_structs(SCLst,ce_file='ce.mson',outdir='vasp_run',Prim=None,TLst=[50
             if not os.path.isdir(structDir): os.mkdir(structDir)
             Poscar(struct.get_sorted_structure()).write_file(os.path.join(structDir,'POSCAR'))
         RO_id += 1
-
     print('Saving of %s successful. Writing VASP input files later.'%outdir)
 
-def _gen_vasp_inputs(SearchDir,functional='PBE', num_kpoints=25,add_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
+def _gen_vasp_inputs(SearchDir='vasp_run',functional='PBE', num_kpoints=25,add_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
     """
     Search through directories, find POSCARs and generate FM VASP inputs.
     """
@@ -514,7 +482,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
 
 class StructureGenerator(MSONable):
     def __init__(self,prim_file='prim.cif', outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64,\
-                 sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson',n_select=1):
+                 sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson'):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
               rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
@@ -537,7 +505,6 @@ class StructureGenerator(MSONable):
               You can apply a transformation before shape enumeration.
         ce_file: the file that contains a full record of the current cluster expansion work, including ce.as_dict, structures, ecis, etc.
         vasp_settings: setting parameters for vasp calcs. Is in dictionary form. Keys are 'functional','num_kpoints','additional_vasp_settings'(in dictionary form), 'strain'(in matrix or list form)
-        n_select: when previous calculations exist, this parameter defines how many structure to enmerate in each cycle.
         """
         if os.path.isfile(prim_file):
             self.prim = CifPrser(prim_file).get_structures()[0]
@@ -554,8 +521,28 @@ class StructureGenerator(MSONable):
         self.transmat = transmat
         #print("Using transformation matrix {}".format(transmat))
         self.ce_file = ce_file
+
+        if ce_file and os.path.isfile(ce_file):
+            # Load cluster expansion
+            with open(ce_file,'r') as Fid: cedata = json.load(Fid);
+            self.ce=ClusterExpansion.from_dict(cedata['cluster_expansion']); 
+            self.ecis=cedata['ecis']; 
+            print('Previous CE information:'); print(ce.structure);
+
+        else:
+            # No existing cluster expansion, we are building form start - use electrostatics only
+            print("Not checking previous cluster expansion, using ewald as sampling criteria.")
+            self.ce=ClusterExpansion.from_radii(self.prim,{2: 1},ltol=0.3,stol=0.2,angle_tol=2,\
+                                       supercell_size='num_sites',use_ewald=True,use_inv_r=False,eta=None);
+            self.ecis=np.zeros(self.ce.n_bit_orderings+1); self.ecis[-1]=1;
+
         self.outdir =  outdir
-        self.n_select = n_select
+        self._pool = []
+        if os.path.isdir(outdir):
+            for root,dirs,files in os.walk(outdir):
+                if _was_generated(files):
+                    self._pool.append(Poscar.from_file(os.path.join(root,'POSCAR').structure))
+
         if os.path.isfile(vasp_settings):
             print("Applying VASP settings in {}.".format(vasp_settings))
             with open(vasp_settings) as vs_in:
@@ -567,17 +554,38 @@ class StructureGenerator(MSONable):
 
     @property
     def sc_ro(self):
+        # Enumerated supercells and compositions.
         if not self._sc_ro:
             self._sc_ro =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
-                                        self.sample_step, self.sc_selec_num, self.transmat,self.n_select)
+                                        self.sample_step, self.sc_selec_num, self.transmat)
         return self._sc_ro
     #Share the same set of sc_ro across project.
 
-    def generate_structures(self):
-        _get_mc_structs(self.sc_ro,ce_file=self.ce_file,outdir=self.outdir,Prim=self.prim,TLst=[500, 1500, 10000],\
+    def generate_structures(self,n_select):
+        """
+            Does not check if ce.mson is generated! So please make sure that, before two StructureGenerator calls,
+            make an analyzer call!
+        """
+        _unique_structs = _get_mc_structs(self.sc_ro,self.ce,self.ecis,Prim=self.prim,TLst=[500, 1500, 10000],\
                             compaxis= self.comp_axis)
+        ss = StructureSelector(self.ce)
+        _unique_structs_buff = list(_unique_structs.items())
+        _pool = [val for key,val in _unique_structs_buff]
 
-    def write_structures(self):
+        if len(self._pool)==0:
+            print("Initializing CE with {} chosen structures.".format(n_init))
+            selected_inds = ss.initialzation(_pool,n_init=n_init)
+        else:
+            print("Updating CE with {} chosen structures.".format(n_add))
+            selected_inds = ss.select_new(self._pool,_pool,n_probe=n_add)
+
+        self._pool = self._pool.extend([_pool[idx] for idx in selected_inds])
+        _unique_structs_selected = {_unique_structs_buff[idx][0]:_unique_structs_buff[idx][1] for idx in selected_inds} 
+
+        _write_mc_structs(_unique_structs_selected,outdir=self.outdir)
+        self._write_vasp_inputs()
+
+    def _write_vasp_inputs(self):
         if self.vasp_settings:
             if 'functional' in self.vasp_settings:
                 functional = self.vasp_settings['functional']
