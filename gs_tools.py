@@ -63,19 +63,21 @@ class GScanonical(MSONable):
     Defines a ground state problem for a generalized ising system. Uses 0/1(cluster counting) formalism.
     """
 
-    def __init__(self, ce, eci, composition, transmat=[[1,0,0],[0,1,0],[0,0,1]],maxsupercell=16, \
-                 max_block_range = 1,num_of_sizes=4, selec=20, hard_marker=1000000000000000, \
+    def __init__(self, ce, eci, composition, transmat=[[1,0,0],[0,1,0],[0,0,1]],maxsupercell=200, \
+                 max_block_range = 1, hard_marker=1000000000000000, \
                  eci_mul=1000000,solver='CCEHC-incomplete',\
                  num_split=10,n_iniframe=20):
         """
         Args:
             ce: a cluster expansion object that you wish to solve the GS of.
             eci: eci's of clusters in ce
-            maxsupercell: maximum supercell sizes
+            maxsupercell: maximum supercell size. Enumerated matrices with det|M|>maxsupercell will be abandoned.
+                          WE ONLY ENUMERATE DIAGONAL MATRICES HERE, based on an assumption that non-diagonal
+                          can be captured by larger diagonal periodicity.
+                          max enumerated sc diameter is chosen based on max interaction distance in ce divided by
+                          primitive cell dimensions
             max_block_range: maximum block extension range. This determines how far an image you want to split your
                              clusters to.(Unit: supercell dimensions)
-            num_of_sizes: number of supercell sizes to be enumerated. When num_of_sizes = 4 while maxsupercell = 16,
-                          enumerated sizes are [4,8,12,16]
             selec: number of enumerated supercell matrices to select.
             solver: the MAXSAT solver used to solve the upper bound problem. Default: CCEHC-incomplete.
                     (We use incomplete solvers to make the time consumption tractable for MAXSAT)
@@ -115,6 +117,10 @@ class GScanonical(MSONable):
         self.solved = False  #call function 'solve' to give a value to this
         self.use_ewald = self.ce.use_ewald
         self.use_inv_r = self.ce.use_inv_r
+
+        if self.use_ewald:
+            print("Warning: Ewald correction required! But I can not guarantee an LB solution. ")
+
         self._enumlist = None
         self.transmat = transmat
         if self.transmat != [[1,0,0],[0,1,0],[0,0,1]]:
@@ -124,6 +130,17 @@ class GScanonical(MSONable):
         self.eci_mul = eci_mul
         self.num_split = num_split
         self.n_iniframe = n_iniframe
+        prim = self.ce.structure
+        if self.transmat != [[1,0,0],[0,1,0],[0,0,1]]:
+            prim = prim.make_supercell(self.transmat)
+        max_radius = max([max([sc.max_radius for sc in self.ce.clusters[sz]]) for sz in self.ce.clusters])
+        self.enum_d = max( int(max_radius/prim.lattice.a)+1, int(max_radius/prim.lattice.b)+1,\
+                           int(max_radius/prim.lattice.c)+1 )
+        self.a = prim.lattice.a
+        self.b = prim.lattice.b
+        self.c = prim.lattice.c
+        # GS structures have to contain at least all types of cluster interactions
+
 ####
 # Callable interface
 ####       
@@ -136,33 +153,23 @@ class GScanonical(MSONable):
     @property
     def enumlist(self):
         """
-            Here we only enumerate upper-triangle matrices!
+            Here we only enumerate diagonal matrices, because off-diagonal perioditicites should be captured in
+            diagonal supercells.
         """
-        if not(self._enumlist):
+        if self._enumlist is None:
             _enumlist=[]
-            scale = int(abs(np.linalg.det(self.transmat)))
-
-            min_size = sum(self.composition[0].values())
-            enumrange = list(range(int(self.maxsupercell/self.num_of_sizes),self.maxsupercell+1,\
-                              int(self.maxsupercell/self.num_of_sizes)))
-            enumrange = [size for size in enumrange if size>min_size]
-            # Size can't be too small in case it can't host a composition ratio.
-            if len(enumrange)==0:
-                print('No enumerated size acceptable. You should consider adjusting your compostion enumeration\
-                       step in generator, or adjust maxsupercell to a proper value (Warning: a value >16 not \
-                       recommended.)')
-                return
-
-            for size in enumrange:
-                print("Enumerating for size %d"%size)
-                _enumlist.extend(Get_Hermite_Matricies(int(size/scale)))
-
-            print("Randomly picking supercell matrices.")
-            self._enumlist=random.sample(_enumlist,self.selec)
+            # enumerate 64 supercell matrices
+            for i in range(self.enum_d, self.enum_d+4):
+                for j in range(self.enum_d,self.enum_d+4):
+                    for k in range(self.enum_d,self.enum_d+4):
+                        if i*j*k<=self.maxsupercell:    
+                            ijk_buff = sorted([(i,self.a),(j,self.b),(k,self.c)],key=lambda x:x[1])
+                            ijk = [v[0] for v in ijk_buff]
+                            _enumlist.append([[ijk[0],0,0],[0,ijk[1],0],[0,0,ijk[2]]])
+                            #longest axis are iterated first to make faster convergence!
             if self.transmat: 
-                self._enumlist=[mat_mul(sc,self.transmat) for sc in self._enumlist]
-            self._enumlist=sorted(self._enumlist,key=lambda a:(abs(np.linalg.det(a)),\
-                                 np.linalg.norm(a[0]),np.linalg.norm(a[1]),np.linalg.norm(a[2])))
+                self._enumlist=[mat_mul(sc,self.transmat) for sc in self._enumlist]            
+
             print("Enumerated supercells generated!")
         #else:    print("use existing enumlist");
         return self._enumlist
@@ -177,9 +184,6 @@ class GScanonical(MSONable):
             self._bclus_corrected = []
             self._ecis_corrected = []
             self._bit_inds = []
-
-            if self.use_ewald:
-                print("Ewald correction required!")
 
             for mat in self.enumlist:
                 clus_sup = self.ce.supercell_from_matrix(mat)
@@ -490,10 +494,6 @@ class GScanonical(MSONable):
             gs_socket.maxsupercell=d['maxsupercell']
         if 'max_block_range' in d:
             gs_socket.max_block_range=d['max_block_range']
-        if 'num_of_sizes' in d:
-            gs_socket.num_of_sizes=d['num_of_sizes']
-        if 'selec' in d:
-            gs_socket.selec = d['selec']
         if 'solver' in d:
             gs_socket.solver = d['solver']
         if 'hard_marker' in d:
@@ -536,8 +536,6 @@ class GScanonical(MSONable):
                 'composition':self.composition,\
                 'maxsupercell':self.maxsupercell,\
                 'max_block_range':self.max_block_range,\
-                'num_of_sizes':self.num_of_sizes,\
-                'selec':self.selec,\
                 'solver':self.solver,\
                 'hard_marker':self.hard_marker,\
                 'eci_mul':self.eci_mul,\
@@ -612,10 +610,6 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gs_setting
             gs_socket.maxsupercell=gs_settings['maxsupercell']
         if 'max_block_range' in gs_settings:
             gs_socket.max_block_range=gs_settings['max_block_range']
-        if 'num_of_sizes' in gs_settings:
-            gs_socket.num_of_sizes=gs_settings['num_of_sizes']
-        if 'selec' in gs_settings:
-            gs_socket.selec=gs_settings['selec']
         if 'solver' in gs_settings:
             gs_socket.solver=gs_settings['solver']
         if 'enumlist' in gs_settings and share_enumlist:
@@ -661,81 +655,82 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gs_setting
 
     return _gs_converged
 
-def writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_settings.mson'):
-    sm = StructureMatcher(ltol=0.2, stol=0.15, angle_tol=5, comparator=ElementComparator())
-    
-    calculated_structures = {}
-    targetdirs = {}
-    maxids = {}
-    _was_generated = lambda x: 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
-    if os.path.isdir(vasprun):
-        print("Checking previously enumerated structures.")
-        for root,dirs,files in os.walk(vasprun):
-            if _was_generated(files):
-                parentdir = os.path.join(*root.split(os.sep)[0:-1])
-                with open(os.join(parentdir,'composition_by_site')) as comp_file:
-                    composition_old = json.load(comp_file)
-                    compstring_old = json.dumps(composition)
-                if compstring_old not in calculated_structures:
-                    calculated_structures[compstring_old]=[]
-                calculated_structures[compstring_old].append(Poscar.from_file(os.join(root,'POSCAR').structure)) 
-                if compstring_old not in targetdirs:
-                    targetdirs[compstring_old]=parentdir
-                if compstring_old not in maxids:
-                    maxids[compstring_old]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
-    else: 
-        print("Previous calculation or generator setting file missing. Exiting")
-        return
-    
-    with open(gs_file) as gs_in:
-        gss = json.load(gs_in)
-    
-    if os.path.isfile(vs_file):
-        with open(vs_file) as vs_in:
-            vasp_settings = json.load(vs_in)
-    else:
-        vasp_settings = None
-
-    for compstring in gss:
-        _unique = True
-        if compstring in calculated_structures:
-            gstruct = Structure.from_dict(gss[compstring]['gs_structure'])
-            for ostruct in calculated_structures[compstring]:
-                if sm.fit(ostruct,gstruct):
-                    print("GS for composition:\n{}\nalready calculated. Skipping.".format(compstring))
-                    _unique = False
-                    break
-        if _unique:
-            targetdir = targetdirs[compstring]
-            writedir = os.path.join(targetdir,str(maxids[compstring]+1))
-            if not os.path.isdir(writedir): os.mkdir(writedir)
-            Poscar(gstruct.get_sorted_structure()).write_file(os.path.join(writedir,'POSCAR'))
-            vaspdir = os.path.join(writedir,'fm.0')
-            if vasp_settings:
-                print("Applying VASP settings",vasp_settings)
-                if 'functional' in vasp_settings:
-                    functional = vasp_settings['functional']
-                else:
-                    functional = 'PBE'
-                if 'num_kpoints' in vasp_settings:
-                    num_kpoints = vasp_settings['num_kpoints']
-                else:
-                    num_kpoints = 25
-                if 'additional_vasp_settings' in vasp_settings:
-                    additional = vasp_settings['additional_vasp_settings']
-                else:
-                    additional = None
-                if 'strain' in vasp_settings:
-                    strain = vasp_settings['strain']
-                else:
-                    strain = ((1.01,0,0),(0,1.05,0),(0,0,1.03))
-            
-                write_vasp_inputs(gstruct,vaspdir,functional,num_kpoints,additional,strain)
-            else:
-                print("Using CEAuto default VASP settings.")
-                write_vasp_inputs(gstruct,vaspdir)
-
-            print('New GS written to {}.'.format(writedir))
+# We don't update gss into structures any more.
+#def writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_settings.mson'):
+#    sm = StructureMatcher(ltol=0.2, stol=0.15, angle_tol=5, comparator=ElementComparator())
+#    
+#    calculated_structures = {}
+#    targetdirs = {}
+#    maxids = {}
+#    _was_generated = lambda x: 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
+#    if os.path.isdir(vasprun):
+#        print("Checking previously enumerated structures.")
+#        for root,dirs,files in os.walk(vasprun):
+#            if _was_generated(files):
+#                parentdir = os.path.join(*root.split(os.sep)[0:-1])
+#                with open(os.join(parentdir,'composition_by_site')) as comp_file:
+#                    composition_old = json.load(comp_file)
+#                    compstring_old = json.dumps(composition)
+#                if compstring_old not in calculated_structures:
+#                    calculated_structures[compstring_old]=[]
+#                calculated_structures[compstring_old].append(Poscar.from_file(os.join(root,'POSCAR').structure)) 
+#                if compstring_old not in targetdirs:
+#                    targetdirs[compstring_old]=parentdir
+#                if compstring_old not in maxids:
+#                    maxids[compstring_old]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
+#    else: 
+#        print("Previous calculation or generator setting file missing. Exiting")
+#        return
+#    
+#    with open(gs_file) as gs_in:
+#        gss = json.load(gs_in)
+#    
+#    if os.path.isfile(vs_file):
+#        with open(vs_file) as vs_in:
+#            vasp_settings = json.load(vs_in)
+#    else:
+#        vasp_settings = None
+#
+#    for compstring in gss:
+#        _unique = True
+#        if compstring in calculated_structures:
+#            gstruct = Structure.from_dict(gss[compstring]['gs_structure'])
+#            for ostruct in calculated_structures[compstring]:
+#                if sm.fit(ostruct,gstruct):
+#                    print("GS for composition:\n{}\nalready calculated. Skipping.".format(compstring))
+#                    _unique = False
+#                    break
+#        if _unique:
+#            targetdir = targetdirs[compstring]
+#            writedir = os.path.join(targetdir,str(maxids[compstring]+1))
+#            if not os.path.isdir(writedir): os.mkdir(writedir)
+#            Poscar(gstruct.get_sorted_structure()).write_file(os.path.join(writedir,'POSCAR'))
+#            vaspdir = os.path.join(writedir,'fm.0')
+#            if vasp_settings:
+#                print("Applying VASP settings",vasp_settings)
+#                if 'functional' in vasp_settings:
+#                    functional = vasp_settings['functional']
+#                else:
+#                    functional = 'PBE'
+#                if 'num_kpoints' in vasp_settings:
+#                    num_kpoints = vasp_settings['num_kpoints']
+#                else:
+#                    num_kpoints = 25
+#                if 'additional_vasp_settings' in vasp_settings:
+#                    additional = vasp_settings['additional_vasp_settings']
+#                else:
+#                    additional = None
+#                if 'strain' in vasp_settings:
+#                    strain = vasp_settings['strain']
+#                else:
+#                    strain = ((1.01,0,0),(0,1.05,0),(0,0,1.03))
+#            
+#                write_vasp_inputs(gstruct,vaspdir,functional,num_kpoints,additional,strain)
+#            else:
+#                print("Using CEAuto default VASP settings.")
+#                write_vasp_inputs(gstruct,vaspdir)
+#
+#            print('New GS written to {}.'.format(writedir))
 
     
     

@@ -329,3 +329,15 @@ def Read_MAXSAT(MAXSAT_PATH='./solvers/',maxsat_fout='maxsat.out'):
     sorted(maxsat_res,key=lambda x:abs(x))
     return maxsat_res
 
+def get_bit_inds(disordered_s):
+    bit_inds = []
+    b_id = 1
+    for i,site in enumerate(disordered_s):
+        site_bit_inds = []
+        for specie_id in range(len(site.species_and_occu)-1):
+        #-1 since a specie on the site is taken as reference
+            site_bit_inds.append(b_id)
+            b_id+=1
+        bit_inds.append(site_bit_inds)
+    #print('%d variables will be used in MAXSAT.'%(b_id-1))
+    return bit_inds
