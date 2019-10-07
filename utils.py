@@ -17,21 +17,6 @@ import json
 ## General tools that will be frequently cross referenced.
 ## Do not add underscore before since that makes them private!!
 ##################################
-def calc_M(bits):
-    M_tot = []
-    for element in bits:
-        M_tot.append(len(element))
-    M_tot = np.array(M_tot)
-    return M_tot
-
-def sigma2gamma(sigma, alpha, M):
-    if alpha %2==1:
-        gamma = -np.cos(2* np.pi * np.ceil(alpha/2)* sigma / M)
-    elif alpha %2 ==0:
-        gamma = -np.sin(2* np.pi* np.ceil(alpha/2) * sigma /M)
-
-    return gamma
-
 def GCD(a,b):
     """ The Euclidean Algorithm """
     a = abs(a)

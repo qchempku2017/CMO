@@ -20,7 +20,7 @@ from pymatgen.util.coord import coord_list_mapping_pbc
 from pymatgen import Structure,PeriodicSite
 from pymatgen.analysis.structure_matcher import StructureMatcher
 
-from global_tools import *
+from utils import *
 from block_tools import CEBlock
 
 __author__ = "Fengyu Xie"

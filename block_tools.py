@@ -2,7 +2,7 @@ __author__ = 'Fengyu Xie'
 __version__ = 1.0
 
 from gurobipy import *
-from global_tools import *
+from utils import *
 from mc import *
 
 from pymatgen.util.coord import lattice_points_in_supercell

@@ -37,8 +37,8 @@ import pickle
 import scipy.io as sio
 import random
 
-from cluster_expansion.ce_opt import *
-from cluster_expansion.ce_select import *
+#from cluster_expansion.ce_opt import *
+#from cluster_expansion.ce_select import *
 
 def find_indices(A, init_A):
     indices = []

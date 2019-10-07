@@ -22,6 +22,21 @@ SYMMETRY_ERROR = ValueError("Error in calculating symmetry operations. Try using
                             "more symmetrically refined input structure. "
                             "SpacegroupAnalyzer(s).get_refined_structure().get_primitive_structure() "
                             "usually results in a safe choice")
+#### Ortho basis
+def calc_M(bits):
+    M_tot = []
+    for element in bits:
+        M_tot.append(len(element))
+    M_tot = np.array(M_tot)
+    return M_tot
+
+def sigma2gamma(sigma, alpha, M):
+    if alpha %2==1:
+        gamma = -np.cos(2* np.pi * np.ceil(alpha/2)* sigma / M)
+    elif alpha %2 ==0:
+        gamma = -np.sin(2* np.pi* np.ceil(alpha/2) * sigma /M)
+
+    return gamma
 
 #### Cluster functions other than 0/1 representation ####
 def cluster_function_ortho(c_occu, combos, Ms):
@@ -50,6 +65,23 @@ def cluster_function_ortho(c_occu, combos, Ms):
             corr_tot += corr_bits / bits_N
 
     return np.average(corr_tot)
+
+#### supplementary tools
+def get_bits(structure):
+    """
+    Helper method to compute list of species on each site.
+    Includes vacancies
+    """
+    all_bits = []
+    for site in structure:
+        bits = []
+        for sp in sorted(site.species.keys()):
+            bits.append(str(sp))
+        if site.species.num_atoms < 0.99:
+            bits.append("Vacancy")
+       #bits.append("Vacancy")
+        all_bits.append(bits)
+    return all_bits
 
 #### Objects ####
 class Cluster(MSONable):
@@ -264,7 +296,7 @@ class ClusterExpansion(object):
                     Typically something like {2:5, 3:4}
                 sm_type:
                     The structure matcher type that you wish to use in structure matching. Can choose from 
-                    pymatgen default (pmg_sm), anion framework (an_frame), anion delauney map (an_dmap)
+                    pymatgen default (pmg_sm), anion framework (an_frame), anion delaunay map (an_dmap)
                 ltol, stol, angle_tol, supercell_size: parameters to pass through to the StructureMatcher, 
                     when sm_type == 'pmg_sm' or 'an_frame'
                     Structures that don't match to the primitive cell under these tolerances won't be included
@@ -322,7 +354,7 @@ class ClusterExpansion(object):
                                    angle_tol=self.angle_tol)
         elif self.sm_type == 'an_dmap':
             try:
-                from delauney_matcher import DelauneyMatcher
+                from delaunay_matcher import DelaunayMatcher
                 self.sm = DelauneyMatcher(vor_tol=self.vor_tol)
             # At leaset three methods are required in Delauney Matcher: match, mapping and supercell matrix finding.
             except:

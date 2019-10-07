@@ -34,7 +34,7 @@ import multiprocessing
 import collections
 
 from cluster_expansion.mc import *
-from global_tools import *
+from utils import *
 from selector_tools import *
 
 ##################################
