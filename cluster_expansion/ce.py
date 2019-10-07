@@ -286,7 +286,7 @@ class ClusterExpansion(object):
     """
 
     def __init__(self, structure, expansion_structure, symops, clusters, sm_type='pmg_sm', ltol=0.2, stol=0.1, angle_tol=5,
-                 vor_tol= 1E-3 ,supercell_size='volume', use_ewald=False, use_inv_r=False, eta=None, basis = '01'):
+                 supercell_size='volume', use_ewald=False, use_inv_r=False, eta=None, basis = '01'):
         """
             Args:
                 structure:
@@ -338,7 +338,7 @@ class ClusterExpansion(object):
         self.sm_type=sm_type
         self.stol = stol
         self.ltol = ltol
-        self.vor_tol = vor_tol
+        #self.vor_tol = vor_tol
         self.basis = basis
 
         if self.sm_type == 'pmg_sm' or self.sm_type == 'an_frame':
@@ -353,9 +353,10 @@ class ClusterExpansion(object):
                                    ltol=self.ltol,
                                    angle_tol=self.angle_tol)
         elif self.sm_type == 'an_dmap':
+            print("Warning: Delaunay matcher only applicable for close packed anion framework!")
             try:
                 from delaunay_matcher import DelaunayMatcher
-                self.sm = DelauneyMatcher(vor_tol=self.vor_tol)
+                self.sm = DelauneyMatcher()
             # At leaset three methods are required in Delauney Matcher: match, mapping and supercell matrix finding.
             except:
                 pass
@@ -378,7 +379,7 @@ class ClusterExpansion(object):
 
 
     @classmethod
-    def from_radii(cls, structure, radii, sm_type = 'pmg_sm', ltol=0.2, stol=0.1, angle_tol=5, vor_tol = 1E-3,\
+    def from_radii(cls, structure, radii, sm_type = 'pmg_sm', ltol=0.2, stol=0.1, angle_tol=5,\
                    supercell_size='volume',use_ewald=False, use_inv_r=False, eta=None, basis = '01'):
         """
         Args:
@@ -407,7 +408,7 @@ class ClusterExpansion(object):
         expansion_structure = Structure.from_sites(sites_to_expand)
         clusters = cls._clusters_from_radii(expansion_structure, radii, symops)
         return cls(structure=structure, expansion_structure=expansion_structure, symops=symops, sm_type = sm_type, \
-                   clusters=clusters,ltol=ltol, stol=stol, angle_tol=angle_tol, vor_tol = vor_tol,\
+                   clusters=clusters,ltol=ltol, stol=stol, angle_tol=angle_tol,\
                    supercell_size=supercell_size, use_ewald=use_ewald, use_inv_r=use_inv_r,eta=eta, basis=basis)
 
     @classmethod
@@ -552,7 +553,7 @@ class ClusterExpansion(object):
                    clusters=clusters, symops=symops, 
                    sm_type = d['sm_type'] if 'sm_type' in d else 'pmg_sm',
                    ltol=d['ltol'], stol=d['stol'], angle_tol=d['angle_tol'],
-                   vor_tol = d['vor_tol'] if 'vor_tol' in d else 1e-3,
+                   #vor_tol = d['vor_tol'] if 'vor_tol' in d else 1e-3,
                    supercell_size=d['supercell_size'],
                    use_ewald=d['use_ewald'], use_inv_r=d['use_inv_r'],
                    eta=d['eta'],
@@ -571,7 +572,7 @@ class ClusterExpansion(object):
                 'ltol': self.ltol,
                 'stol': self.stol,
                 'angle_tol': self.angle_tol,
-                'vor_tol': self.vor_tol,
+                #'vor_tol': self.vor_tol,
                 'supercell_size': self.supercell_size,
                 'use_ewald': self.use_ewald,
                 'use_inv_r': self.use_inv_r,
