@@ -13,7 +13,11 @@ EXTENSIVELY ENOUGH FOR PRODUCTION and there are I think serious problems with th
 be resolved before the gs_preservation routine will be of use for practical work.
 
 2019-09-24 - Notes from Fengyu Xie (fengyu_xie@berkeley.edu)
-This version added a new fitting method to implement the l1/l0 method by Wenxuan Huang in 2018. Gurobi licence required!
+In this version I added a new fitting method to implement the l1/l0 method by Wenxuan Huang in 2018. Gurobi licence required!
+
+2019-10-06 - Notes from Fengyu Xie
+In this version I added principal component regression as a testing feature. Do basis orthogonalization and fit at the same
+time.
 """
 
 import os
@@ -126,7 +130,10 @@ class EciGenerator(object):
             energies: list of total (non-normalized) energies
             weights: list of weights for the optimization.
             mu: mu to use in the split_bregman, otherwise optimal value is calculated
-                by CV optimization
+                by CV optimization;
+                When using L1 opt, mu is one single float number
+                When using L1/L0, mu = [mu0,mu1]
+                When using pcr, mu = pcr singular value cutoff threshold.
             max_dielectric: constrain the dielectric constant to be positive and below the
                 supplied value (note that this is also affected by whether the primitive
                 cell is the correct size)
@@ -212,10 +219,12 @@ class EciGenerator(object):
 
 #### Important update: ecis no longer generated in __init__. Call this ####
 #### to generate ecis ####
-    def generate(self):
+    def generate(self, min_mu = -1, max_mu = 6):
         if self.mu is None:
             print('Finding optimum mu')
-            self.mu = self.get_optimum_mu(self.feature_matrix, self.normalized_energies, self.weights)
+            self.mu = self.get_optimum_mu(self.feature_matrix, self.normalized_energies, self.weights, min_mu = min_mu, max_mu = max_mu)
+            # Remeber to change the mu searching range for pcr solver
+            # Recommended PCR min_mu = -5, max_mu = 0
             logging.info("Opt mu: {}".format(self.mu))              
         # actually fit the cluster expansion
         else:
@@ -387,7 +396,7 @@ class EciGenerator(object):
             self.cvs = [self._calc_cv_score(mu,A,f,weights,k=5)]
             return 0
 
-        elif self.solver!='l1l0':
+        elif self.solver in ['cvxopt_l1','bregman_l1','pcr']:
             mus = list(np.logspace(min_mu, max_mu, 10))
             cvs = [self._calc_cv_score(mu, A, f, weights, k) for mu in mus]
             
@@ -410,8 +419,9 @@ class EciGenerator(object):
             self.cvs = cvs
             logging.info('best cv score: {}'.format(np.nanmax(self.cvs)))
             return mus[np.nanargmax(cvs)]
+        # Recommended PCR min_mu = -5, max_mu = 0
 
-        else:
+        elif self.solver == 'l1l0':
             mu0s = list(np.logspace(-5,-2, 6))
             mu1s = list(np.logspace(-2, 1, 4)) # Based on Wenxuan's empirical values.
             cvs_cur = []
@@ -445,7 +455,7 @@ class EciGenerator(object):
                     break
                 if j == len(mu1s)-1:
                     if it==0:
-                        warnings.warn('Largest mu0 chosen. You should probably increase the basis set')
+                        warnings.warn('Largest mu1 chosen. You should probably increase the basis set')
                     break
                 
                 mu0_min = mu0s[i-1] if i else mu0s[i]
@@ -455,13 +465,16 @@ class EciGenerator(object):
                 p = np.log(10)        
                 mu0s = list(np.logspace(np.log(mu0_min)/p,np.log(mu0_max)/p,4))
                 mu1s = list(np.logspace(np.log(mu1_min)/p,np.log(mu1_max)/p,6))
-                
+                     
             self.mus = mus_cur
             self.cvs = cvs_cur
             #print('cvs:',self.cvs,'\nmus:',self,mus)
             i_opt,j_opt = np.unravel_index(np.argmax(np.array(self.cvs), axis=None), np.array(self.cvs).shape)
             logging.info('best cv score: {}'.format(self.cvs[i_opt][j_opt]))
             return self.mus[i_opt][j_opt]
+
+        else:
+            raise ValueError("Solver not supported!")
 
     def _calc_cv_score(self, mu, A, f, weights, k=5):
         """
@@ -536,6 +549,8 @@ class EciGenerator(object):
             return self._solve_gs_preserve(A_w, f_w, mu, subsample_mapping=subset_mapping, skip_gs=skip_gs)
         elif self.solver == 'l1l0':
             return self._solve_l1l0(A_w, f_w, mu[0], mu[1])
+        elif self.solver == 'pcr':
+            return self._solve_pcr(A_w, f_w, mu)
         elif self.solver == 'lstsq':
             return np.linalg.lstsq(A_w, f_w,rcond=None)[0]
 
@@ -590,6 +605,25 @@ class EciGenerator(object):
         w_opt = np.array([w[v_id].x for v_id in w])
         return w_opt
 
+    def _solve_pcr(self, A, f, mu):
+        """
+        Reduce cluster dimensionality using PCR method.
+        """
+        V,s,VT = np.linalg.svd(A.T@ A)
+        d= A.shape[1]
+        n= A.shape[0]
+        k_cut = min(n,d)
+        # If the model is not full rank, we will cut it to full rank to make it solvable.
+        for k in range(min(n,d)):
+            if s[k]<mu:
+                k_cut = k
+                break
+        Vk = V[:,:k_cut]
+        Ak = A@Vk
+        wk = np.linalg.inv(Ak.T@Ak)@Ak.T@f
+        w_opt = Vk@wk
+        return w_opt
+                
     def _solve_gs_preserve(self, A, f, mu, subsample_mapping, skip_gs=False):
         """
         Code notes from Daniil Kitchaev (dkitch@alum.mit.edu) - 2018-09-10
