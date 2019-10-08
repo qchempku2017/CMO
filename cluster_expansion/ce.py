@@ -296,13 +296,12 @@ class ClusterExpansion(object):
                     Typically something like {2:5, 3:4}
                 sm_type:
                     The structure matcher type that you wish to use in structure matching. Can choose from 
-                    pymatgen default (pmg_sm), anion framework (an_frame), anion delaunay map (an_dmap)
+                    pymatgen default (pmg_sm), anion framework (an_frame)
                 ltol, stol, angle_tol, supercell_size: parameters to pass through to the StructureMatcher, 
                     when sm_type == 'pmg_sm' or 'an_frame'
                     Structures that don't match to the primitive cell under these tolerances won't be included
                     in the expansion. Easiest option for supercell_size is usually to use a species that has a
                     constant amount per formula unit.
-                vor_tol: Vorioni tolerance parameter to pass into the DelauneyMatcher, when sm_type = 'an_dmap'
                 use_ewald:
                     whether to calculate the ewald energy of each structure and use it as a feature. Typically
                     a good idea for ionic materials.
@@ -352,14 +351,15 @@ class ClusterExpansion(object):
                                    stol=self.stol,
                                    ltol=self.ltol,
                                    angle_tol=self.angle_tol)
-        elif self.sm_type == 'an_dmap':
-            print("Warning: Delaunay matcher only applicable for close packed anion framework!")
-            try:
-                from delaunay_matcher import DelaunayMatcher
-                self.sm = DelauneyMatcher()
-            # At leaset three methods are required in Delauney Matcher: match, mapping and supercell matrix finding.
-            except:
-                pass
+       # elif self.sm_type == 'an_dmap':
+       #     print("Warning: Delaunay matcher only applicable for close packed anion framework!")
+       #     try:
+       #         from delaunay_matcher import DelaunayMatcher
+       #         self.sm = DelauneyMatcher()
+       #     # At leaset three methods are required in Delauney Matcher: match, mapping and supercell matrix finding.
+       #     except:
+       #         pass
+       # I abandoned delaunay because it is not stable with respect to distortion.
         else:
             raise ValueError('Structure matcher not implemented!')
 
@@ -452,7 +452,7 @@ class ClusterExpansion(object):
         return clusters
 
     def supercell_matrix_from_structure(self, structure):
-        if self.sm_type == 'pmg_sm' or self.sm_type == 'an_dmap': 
+        if self.sm_type == 'pmg_sm': 
             sc_matrix = self.sm.get_supercell_matrix(structure, self.structure)
         elif self.sm_type == 'an_frame':
             prim_an_sites = [site for site in self.structure if Is_Anion_Site(site)]
@@ -469,6 +469,8 @@ class ClusterExpansion(object):
                                                         [latt.alpha, latt.beta, latt.gamma])
             structure_an = Structure(s_an_latt,s_an_sps,s_an_fracs,to_unit_cell =False, coords_are_cartesian=False)
             sc_matrix = self.sm.get_supercell_matrix(structure_an, prim_an)
+        else:
+            raise ValueError("Structure Matcher type not implemented!")
         if sc_matrix is None:
             raise ValueError("Supercell couldn't be found")
         if np.linalg.det(sc_matrix) < 0:
