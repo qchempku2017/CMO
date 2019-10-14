@@ -100,6 +100,8 @@ class GScanonical(MSONable):
         self._bclus_corrected = None
         self._ecis_corrected = None
         self._bit_inds = None
+        self._bclus_ewald = None
+        self._ecis_ewald = None
 
         self.maxsupercell = maxsupercell
         self.max_block_range = max_block_range
@@ -183,10 +185,13 @@ class GScanonical(MSONable):
             Returns a list of ewald corrected bit_clusters, each element for a matrix in self.enumlist.
         """
 
-        if (not self._bclus_corrected) or (not self._ecis_corrected) or (not self._bit_inds):
+        if (not self._bclus_corrected) or (not self._ecis_corrected) or (not self._bit_inds) \
+            or (not self._bclus_ewald) or (not self._ecis_ewald):
             self._bclus_corrected = []
             self._ecis_corrected = []
             self._bit_inds = []
+            self._bclus_ewald = []
+            self._ecis_ewald = []
 
             for mat in self.enumlist:
                 clus_sup = self.ce.supercell_from_matrix(mat)
@@ -227,18 +232,26 @@ class GScanonical(MSONable):
                     for b_cluster_ew,b_eci_ew in zip(b_clusters_ew,eci_return_ew):
                         _in_b_clusters = False
                         for bc_id,b_cluster in enumerate(b_clusters):
-                            if len(b_cluster)>2:
+                            if len(b_cluster)!=len(b_cluster_ew):
                                 continue
-                            #b_cluster won't duplicate. Trust Danill.
-                            if b_cluster == b_cluster_ew:                        
-                                eci_return[bc_id]=eci_return[bc_id] + b_eci_ew
+                            if len(b_cluster)==2:
+                                if b_cluster == b_cluster_ew or Reversed(b_cluster)==b_cluster_ew:                        
+                                    eci_return[bc_id]=eci_return[bc_id] + 2*b_eci_ew
                                 #*2 because a pair only appear in b_clusters_ew for once, but should be summed twice
-                                _in_b_clusters = True
-                                break
+                                    _in_b_clusters = True
+                                    break
+                            elif len(b_cluster)==1:
+                                if b_cluster == b_cluster_ew:
+                                    eci_return[bc_id]=eci_return[bc_id] = b_eci_ew
+                                    _in_b_clusters = True
+                                    break
                         if not _in_b_clusters:
                             b_clusters.append(b_cluster_ew)
-                            eci_return.append(b_eci_ew)
-        
+                            eci_return.append(b_eci_ew if len(b_cluster_ew)==1 else: b_eci_ew*2)
+                
+                self._bclus_ewald.append(b_clusters_ew)
+                self._ecis_ewald.append(b_eci_ew)
+
                 self._bclus_corrected.append(b_clusters)
                 self._ecis_corrected.append(eci_return)
 
@@ -246,16 +259,31 @@ class GScanonical(MSONable):
 
     @property
     def ecis_corrected(self):
-        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds):
+        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds)\
+           or (not self._ecis_ewald) or (not self._bclus_ewald):
             bclus_corrected = self.bclus_corrected
         return self._ecis_corrected
 
     @property
     def bit_inds(self):
-        if (not self._ecis_corrected) or (not self._bclus_corrected) :
+        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds)\
+           or (not self._ecis_ewald) or (not self._bclus_ewald):           
             bclus_corrected = self.bclus_corrected
         return self._bit_inds
 
+    @property
+    def bclus_ewald(self):
+        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds)\
+           or (not self._ecis_ewald) or (not self._bclus_ewald):           
+            bclus_corrected = self.bclus_corrected
+        return self._bclus_ewald
+
+    @property
+    def ecis_ewald(self):
+        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds)\
+           or (not self._ecis_ewald) or (not self._bclus_ewald):           
+            bclus_corrected = self.bclus_corrected
+        return self._ecis_ewald
 ####
 # Private tools for the class
 #### 
@@ -434,24 +462,26 @@ class GScanonical(MSONable):
             gs_socket.str_upper=d['str_upper']
         if 'transmat' in d:
             gs_socket.transmat=d['transmat']
-        if 'enumlist=' in d:
+        if 'enumlist' in d:
             gs_socket._enumlist=d['enumlist']
-        if 'bclus_corrected' in d and 'ecis_corrected' in d and 'bit_inds' in d:
+        if 'bclus_corrected' in d and 'ecis_corrected' in d and 'bit_inds' in d and 'bclus_ewald' in d\
+            and 'ecis_ewald' in d:
             gs_socket._bclus_corrected = d['bclus_corrected']
             gs_socket._ecis_corrected = d['ecis_corrected']
             gs_socket._bit_inds = d['bit_inds']
+            gs_socket._bclus_ewald = d['bclus_ewald']
+            gs_socket._ecis_ewald = d['ecis_ewald']
         if ('e_lower' in d) and ('e_upper' in d) and np.abs(d['e_lower']-d['e_upper'])<=0.001 and ('str_upper' in d):
             gs_socket.solved=True
-            print("Loaded instance already has a solved GS. GS energy: %f"%(gs_socket.e_upper))
-            print("Under composition:",gs_socket.composition)
+            #print("Loaded instance already has a solved GS. GS energy: %f"%(gs_socket.e_upper))
+            #print("Under composition:",gs_socket.composition)
         else:
             print("Loaded cluster expansion needs GS solution. Use self.solve() method to generate one.")
         return gs_socket
     
     def as_dict(self):
         if not self.solved:
-            print("Your ground state has not been solved yet, go back.")
-            return
+            print("Warning: Your ground state has not been solved yet. If you haven't tried, please go back.")
         return {'cluster_expansion':self.ce.as_dict(),\
                 'ecis':self.eci,\
                 'composition':self.composition,\
@@ -470,38 +500,35 @@ class GScanonical(MSONable):
                 'bclus_corrected':self.bclus_corrected,\
                 'ecis_corrected':self.ecis_corrected,\
                 'bit_inds':self.bit_inds,\
+                'bclus_ewald':self.bclus_ewald,\
+                'ecis_ewald':self.ecis_ewald,\
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
                }
 
-    def write_settings(self,gs_settings='gs_settings.mson',use_same_setting=True):
-        if use_same_setting and not os.path.isfile(gs_settings):
-            print("Using same setting across the hull, but setting file is not written. Writing into {}".format(gs_settings))
-            settings = {'maxsupercell':self.maxsupercell,\
-                        'max_block_range':self.max_block_range,\
-                        'num_of_sizes':self.num_of_sizes,\
-                        'selec':self.selec,\
-                        'enumlist':self.enumlist,\
-                        'solver':self.solver,\
-                        'hard_marker':self.hard_marker,\
-                        'eci_mul':self.eci_mul,\
-                        'num_split':self.num_split,\
-                        'n_iniframe':self.n_iniframe,\
-                       }
-            with open(gs_settings,'w') as fout:
-                json.dump(settings,fout)
+    def as_file(self,gs_solver_file='gs_solver.mson'):
+        with open(gs_solver_file,'w') as fout:
+            json.dump(self.as_dict(),fout)
 
-
+    @classmethod
+    def from_file(cls,gs_solver_file='gs_solver.mson'):
+        with open(gs_solver_file,'r') as fin:
+            gsd = json.load(fin)
+        return cls.from_dict(gsd)
 ####
 # Canonical to Semi-grand
 ####
 
-def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gs_setting_file='gs_settings.mson',gs_file = 'gs.mson',share_enumlist=True):
+def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',outdir = 'gs_run',share_enumlist=True):
     """
     Here we generate all the canonical ground states for the hull in calc_data_file, and store them in gs_file.
     Output:
         A boolean variable. Indicating whether the GS has converged for hull. Currently only judging from energy.
     """
+    if not(os.path.isdir(outdir)):
+        os.makedirs(outdir)        
+    #creating a folder to store previous gs calculations.    
+
     if not(os.path.isfile(ce_file)) or not(os.path.isfile(calc_data_file)):
         print("No valid cluster expansion and calculation datas detected, can't solve GS!")
         return
@@ -518,63 +545,31 @@ def solvegs_for_hull(ce_file='ce.mson',calc_data_file='calcdata.mson',gs_setting
 
     for compstring in calcdata['compositions']:
         composition=json.loads(compstring)
-
-        if os.path.isfile(gs_setting_file):
-            print("Using existing generator settings from {}.".format(gs_setting_file))
-            with open(gs_setting_file) as fin:
-                gs_settings = json.load(fin)
+        filename = os.path.join(outdir,compstring)
+        if len(os.listdir(outdir)) and share_enumlist:
+            print("Using existing generator settings.")
+            gs_socket=GScanonical.from_file(os.path.join(outdir,os.listdir(outdir)[-1]))
+            #clearing out previous results, only using old settings and el-corrections.
+            gs_socket.solved = False
+            gs_socket.e_upper = None
+            gs_socket.e_lower = None
+            gs_socket.str_upper = None
         else:
-            gs_settings = {}
-
-        gs_socket = GScanonical(ce,ecis,composition)
-        if 'maxsupercell' in gs_settings:
-            gs_socket.maxsupercell=gs_settings['maxsupercell']
-        if 'max_block_range' in gs_settings:
-            gs_socket.max_block_range=gs_settings['max_block_range']
-        if 'solver' in gs_settings:
-            gs_socket.solver=gs_settings['solver']
-        if 'enumlist' in gs_settings and share_enumlist:
-            gs_socket._enumlist=gs_settings['enumlist']
-        if 'hard_marker' in gs_settings:
-            gs_socket.hard_marker = gs_settings['hard_marker']
-        if 'eci_mul' in gs_settings:
-            gs_socket.eci_mul = gs_settings['eci_mul']
-        if 'num_split' in gs_settings:
-            gs_socket.num_split = gs_settings['num_split']
-        if 'n_iniframe' in gs_settings:
-            gs_socket.n_iniframe = gs_settings['n_iniframe']
- 
-        if not os.path.isfile(gs_setting_file):
-            print("GS solver setting not recorded. Saving.")
-            gs_socket.write_settings(gs_setting_file)
-              
-        gss[compstring]={}
+            gs_socket = GScanonical(ce,ecis,composition)
+           
         print("Solving for composition:",compstring)
         gs_socket.solve()
-        #if gs_socket.solved:
-        gss[compstring]['gs_structure']=\
-            gs_socket.str_upper.as_dict() if gs_socket.str_upper else None
-        gss[compstring]['gs_energy']=gs_socket.e_upper
+        gss[compstring]={}
+        gss[compstring]['e_upper']=gs_socket.e_upper
+        gss[compstring]['e_lower']=gs_socket.e_lower
+        gss[compstring]['str_upper']=gs_socket.str_lower
         gss[compstring]['solved']=gs_socket.solved
-
-    if os.path.isfile(gs_file):
-        with open(gs_file) as gs_in:
-            gss_old = json.load(gs_in)
-        _gs_converged = True
-        for compstring in gss:
-            if 'gs_energy' not in gss_old[compstring] or 'gs_energy' not in gss[compstring] or \
-                    abs(gss_old[compstring]['gs_energy']-gss[compstring]['gs_energy'])>0.001:
-                _gs_converged = False
-                break
-    else:
-         _gs_converged = False
-
-    with open(gs_file,'w') as gs_out:
-        json.dump(gss,gs_out)
+        gs_socket.as_file(filename)
+        #if gs_socket.solved:
 
     print("Solved GS structures on {} hull points.".format(len(gss)))
 
-    return _gs_converged
+    return gss
 
 # We don't update gss into structures any more.
 #def writegss_to_vasprun(gs_file='gs.mson',vasprun='vasp_run',vs_file='vasp_settings.mson'):

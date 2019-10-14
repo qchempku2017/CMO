@@ -175,7 +175,20 @@ def write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vas
         if Sym == 'Zr': POTSyms[i]='Zr_sv';
     Potcar(POTSyms,functional=functional).write_file(os.path.join(VASPDir,'POTCAR'));
 
-
+def get_bit_inds(sc):
+    """
+        Generate maxsat variable indices.
+    """
+    bit_inds = []
+    b_id = 1
+    for i,site in enumerate(sc):
+        site_bit_inds = []
+        for specie_id in range(len(site.species)-1):
+        #-1 since a specie on the site is taken as reference
+            site_bit_inds.append(b_id)
+            b_id+=1
+        bit_inds.append(site_bit_inds)
+    return bit_inds
 
 def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,maxsat_fin='maxsat.wcnf',\
                        MAXSAT_PATH='./solvers/',sc_size=None,conserve_comp=None,\
@@ -314,17 +327,4 @@ def Read_MAXSAT(MAXSAT_PATH='./solvers/',maxsat_fout='maxsat.out'):
     sorted(maxsat_res,key=lambda x:abs(x))
     return maxsat_res
 
-def get_bit_inds(sc):
-    """
-        Generate maxsat variable indices.
-    """
-    bit_inds = []
-    b_id = 1
-    for i,site in enumerate(sc):
-        site_bit_inds = []
-        for specie_id in range(len(site.species)-1):
-        #-1 since a specie on the site is taken as reference
-            site_bit_inds.append(b_id)
-            b_id+=1
-        bit_inds.append(site_bit_inds)
-    return bit_inds
+

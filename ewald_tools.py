@@ -30,7 +30,7 @@ def ewald_correction(ce,supmat,ecis):
     if not ce.use_inv_r:
         eci_ew = ecis[-1]
         for i in range(len(bit_inds)):
-            for j in range(len(bit_inds)):
+            for j in range(i,len(bit_inds)):
                 if i!=j:
                     for k in range(len(bit_inds[i])):
                         for l in range(len(bit_inds[j])):
@@ -65,7 +65,7 @@ def ewald_correction(ce,supmat,ecis):
             sp_list.extend([sublat_sp_list]*len(sublat))
        
         for i in range(len(bit_inds)):
-            for j in range(len(bit_inds)):
+            for j in range(i,len(bit_inds)):
                 if i!=j:
                     for k in range(len(bit_inds[i])):
                         for l in range(len(bit_inds[j])):
