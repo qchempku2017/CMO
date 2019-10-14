@@ -21,7 +21,6 @@ from pymatgen import Structure,PeriodicSite
 from pymatgen.analysis.structure_matcher import StructureMatcher
 
 from utils import *
-from ewald_tools import *
 from block_tools import CEBlock
 
 __author__ = "Fengyu Xie"
@@ -94,8 +93,6 @@ class GScanonical(MSONable):
                                part!!
         """
         self.ce = ce
-        if self.ce.basis != '01':
-            raise NotImplementedError("GS solver not implemented for other basis.")
         self.eci = eci
         self._bclus_corrected = None
         self._ecis_corrected = None
@@ -192,7 +189,16 @@ class GScanonical(MSONable):
                 clus_sup = self.ce.supercell_from_matrix(mat)
 
                 #Generate a refenrence table for MAXSAT var_id to specie_id. Note: MAXSAT var_id starts from 1
-                bit_inds = get_bit_inds(clus_sup.supercell)
+                bit_inds = []
+                b_id = 1
+                for i,site in enumerate(clus_sup.supercell):
+                    site_bit_inds = []
+                    for specie_id in range(len(site.species_and_occu)-1):
+                    #-1 since a specie on the site is taken as reference
+                        site_bit_inds.append(b_id)
+                        b_id+=1
+                    bit_inds.append(site_bit_inds)
+                print('%d variables will be used in MAXSAT.'%(b_id-1))
                 self._bit_inds.append(bit_inds)
                 #print(bit_inds)
                 
@@ -207,30 +213,103 @@ class GScanonical(MSONable):
                 #eci[0] is zero cluster
                 #eci[-1] is ewald cluster
                 #sc_b_id starts from 1
-                eci_0 = eci[0]
                 for sc,sc_inds in clus_sup.cluster_indices:
-                    for i,combo_orbit in enumerate(sc.bit_combos):
-                        for j,combo in enumerate(combo_orbit):
-                            b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
+                    for i,all_combo in enumerate(sc.bit_combos):
+                        for combo in all_combo:
+                            b_clusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
                                                   for sc_ind in sc_inds])
-                            combo_id = sum([len(orbit) for orbit in sc.bit_combos[:i]])+j
-                            eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][combo_id]\
+                            eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]\
                                                    for sc_ind in sc_inds])
 
                 if self.use_ewald:
                     #Here we do electro-static correction. Reference zero energy state is the one that all sites 
                     #are occupied by reference compound.
-                    print("Making up all ewald interactions for supercell:",mat,eci)
+                    print("Making up all ewald interactions for supercell:",mat)
+
+                    ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup.supercell])
+                    H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
+
+                    #Ewald energy E_ew = (q+r)*H*(q+r)'. I used a stupid way to get H but quite effective.
+                    supbits = get_bits(clus_sup.supercell)
+                    r = np.array([GetIonChg(bits[-1]) for bits in supbits])
+                    chg_bits = [[GetIonChg(bit)-GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
+                    H_r = np.dot(H,r)
                     
-                    b_clusters_ew, b_eci_ew = ewald_correction(self.ce,mat)
-                    #Doing real corrections to ecis
+                    b_clusters_ew = []
+                    eci_return_ew = []
+
+                    if not self.use_inv_r:
+                        eci_ew = eci[-1]
+
+                        for i in range(len(bit_inds)):
+                            for j in range(i,len(bit_inds)):
+                                for k in range(len(bit_inds[i])):
+                                    for l in range((k if i==j else 0),len(bit_inds[j])):
+                                        if bit_inds[i][k]!=bit_inds[j][l]:
+                                            bit_a = bit_inds[i][k]
+                                            bit_b = bit_inds[j][l]
+                                            b_clusters_ew.append([bit_a,bit_b]) 
+                                            eci_return_ew.append(2*eci_ew* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                        else:
+                                            bit = bit_inds[i][k]
+                                            b_clusters_ew.append([bit])
+                                            eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
+
+                    else:
+                        #When using inv_r, an independent ewald sum is generated for each specie-specie pair, and the sums are
+                        #considered components of corr
+                        N_sp = sum([len(site.species_and_occu) for site in clus_sup.cluster_expansion.structure])
+                        N_eweci = 1+N_sp+N_sp*(N_sp-1)//2
+                        eci_ew = eci[-N_eweci:]
+                        
+                        equiv_sites = []
+                        for sc,inds in clus_sup.cluster_indices:
+                            if len(sc.bits)>1:
+                                break
+                            equiv_sites.append(inds[:,0])
+
+                        sp_list = []
+                        sp_id = 0
+                        for sublat in equiv_sites:
+                            sublat_sp_list = []
+                            for specie_id in bit_inds[sublat[0]]:
+                                sublat_sp_list.append(sp_id)
+                                sp_id += 1
+                            sp_list.extend([sublat_sp_list]*len(sublat))
+                       
+                        for i in range(len(bit_inds)):
+                            for j in range(i,len(bit_inds)):
+                                for k in range(len(bit_inds[i])):
+                                    for l in range((k if i==j else 0),len(bit_inds[j])):
+                                        if bit_inds[i][k]!=bit_inds[j][l]:
+                                            bit_a = bit_inds[i][k]
+                                            bit_b = bit_inds[j][l]
+                                            b_clusters_ew.append([bit_a,bit_b])
+                                            id_a = sp_list[i][k]
+                                            id_b = sp_list[j][l]
+                                            id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b - id_a -1 # Serial id of a,b pair in eci_ew list.
+                                            eci_return_ew.append(2*eci_ew[N_sp+id_abpair]* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
+                                        else: #Point terms
+                                            bit = bit_inds[i][k]
+                                            b_clusters_ew.append([bit])
+                                            id_bit = sp_list[i][k]
+                                            point_eci = eci_ew[id_bit]*chg_bits[i][k]**2*H[i][i]
+                                            for m in range(len(bit_inds)):
+                                                id_a = id_bit
+                                                id_b = sp_list[m][-1] #id of the reference specie
+                                                id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b -id_a -1
+                                                #Calculate H_r term with weight!
+                                                point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]*eci_ew[N_sp+id_abpair]
+                                            eci_return_ew.append(point_eci)
+                                            # eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+2*chg_bits[i][k]*H_r[i]))
+                    #Corrections
                     for b_cluster_ew,b_eci_ew in zip(b_clusters_ew,eci_return_ew):
                         _in_b_clusters = False
                         for bc_id,b_cluster in enumerate(b_clusters):
                             if len(b_cluster)>2:
                                 continue
                             #b_cluster won't duplicate. Trust Danill.
-                            if b_cluster == b_cluster_ew:                        
+                            if b_cluster == b_cluster_ew or Reversed(b_cluster)==b_cluster_ew:                        
                                 eci_return[bc_id]=eci_return[bc_id] + b_eci_ew
                                 #*2 because a pair only appear in b_clusters_ew for once, but should be summed twice
                                 _in_b_clusters = True
