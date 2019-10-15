@@ -213,10 +213,11 @@ class GScanonical(MSONable):
                         for j,combo in enumerate(combo_orbit):
                             b_clusters.extend([[bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
                                                   for sc_ind in sc_inds])
-                            combo_id = sum([len(orbit) for orbit in sc.bit_combos[:i]])+j
-                            eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][combo_id]\
+                            #combo_id = sum([len(orbit) for orbit in sc.bit_combos[:i]])+j
+                            bit_multip = sc.multiplicity*len(combo_orbit)
+                            eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][i]/bit_multip\
                                                    for sc_ind in sc_inds])
-
+                            #one eci for one orbit
                 self._bclus_original.append(b_clusters)
                 self._ecis_original.append(eci_return)
         else:

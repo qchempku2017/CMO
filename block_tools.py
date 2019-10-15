@@ -12,6 +12,7 @@ import numpy as np
 import random
 
 from itertools import product
+from utils import *
 
 ##### Tool functions #####
 SITE_TOL = 1E-5
@@ -85,7 +86,8 @@ class CEBlock(object):
         num_of_sclus_tosplit: This specifies how many SymmetrizedClusters are chosen for splitting. Select those with highest
                               absolute ECI values.
     '''
-    def __init__(self, ce, matrix, eci, composition, bit_inds, bclus_ewald, eci_ewald, block_range=1, solver='CCEHC-incomplete', \
+    def __init__(self, ce, matrix, eci, composition, bclus_ewald=[], eci_ewald=[],\
+                 block_range=1, solver='CCEHC-incomplete', init_method = 'random'\
                  hard_marker=1000000000000000, eci_mul=1000000,n_iniframe=20,num_of_sclus_tosplit=10):
 
         self.ce = ce
@@ -96,12 +98,13 @@ class CEBlock(object):
         self._zero_eci = self.eci[0]
 
         self.solver = solver
+        self.init_method = init_method
 
         self.composition = composition
         sp_count = sum(self.composition[0].values())
         self.frac_comp = [{sp:(float(sublat[sp])/sp_count) for sp in sublat} for sublat in composition]
 
-        self.bit_inds_sc = bit_inds
+        self.bit_inds_sc = get_bit_inds(clus_sup.supercell)
         self.bclus_ewald = bclus_ewald
         self.eci_ewald = eci_ewald       
  
@@ -133,6 +136,13 @@ class CEBlock(object):
         self._splitted_ecis = []        
         self._original_bclusters = []
         self._original_ecis = []
+        
+        if self.ce.use_ewald and (len(bclus_ewald)==0 or len(eci_ewald)==0):
+            raise ValueError("Cluster expansion requires ewald correction, but none was given.")
+        self._ewald_bclusters = bclus_ewald
+        self._ewald_ecis = eci_ewald
+        
+        self._initialize()
         
 #### public socket ####
     def solve(self):
@@ -231,8 +241,8 @@ class CEBlock(object):
         bit_inds = self.bit_inds_sc 
        
         for sc,sc_inds in self.contained_cluster_indices:
-            for i,all_combo in enumerate(sc.bit_combos):
-                for combo in all_combo:
+            for i,combo_orbit in enumerate(sc.bit_combos):
+                for j,combo in enumerate(combo_orbit):
                     for sc_ind in sc_inds:
                         bclus = []
                         for s,site in enumerate(sc_ind):
@@ -252,7 +262,11 @@ class CEBlock(object):
                     eci_new = {size:[self.eci[(sc.sc_b_id):(sc.sc_b_id+len(sc.bit_combos))] for sc in self.clusters[size]] \
                                for size in self.clusters}
 
-                    self._original_ecis.extend([eci_new[len(sc.bits)][sc.sc_id-self.clusters[len(sc.bits)][0].sc_id][i]\
+                    #combo_id = sum([len(orbit) for orbit in sc.bit_combos[:i]])+j
+                    #one eci for one orbit.
+
+                    bit_multip = sc.multiplicity*len(combo_orbit)
+                    self._original_ecis.extend([eci_new[len(sc.bits)][sc.sc_id-self.clusters[len(sc.bits)][0].sc_id][i]/bit_multip\
                                                   for sc_ind in sc_inds])
         
         #### Splitting and extension. Trivial. ####
@@ -303,15 +317,25 @@ class CEBlock(object):
             print('Splitting pattern wrong. Exiting!')
             return
 
-        #Max image bit index
-        #Must extend len(bit_inds) to self.num_of_vars. This is required by MAXSAT solvers.                    
-        #print("Ori:",self._original_bclusters)
-        #print("splt:",self._splitted_bclusters)
-        print("Initializing frames with lowest CE-MC energy!")
-        #preparing MC.
-        #Critical error before: initial configuration can not simply be set by replication of 
-        #sueprcell, or all lambda terms would be cancelled out!
-        
+        if self.init_method = 'mc':
+            iniconfigs = self._mc_sampling()
+        elif self.init_method = 'random':
+            iniconfigs = self._rand_sampling()
+        else:
+            raise NotImplementedError("Initialization method not implemented.")
+        return iniconfigs
+    
+    def _rand_sampling(self):
+        "Random choice of block"
+        configs = []
+        for i in range(self.n_iniframe):
+            config = [(b if random.random()>0.5 else -b) for b in range(1,self.num_of_vars+1)]
+            configs.append(config)
+        return config       
+    
+    def _mc_sampling(self):
+        "Pile up mc low energy supercells to make a block."
+
         sites_WorthToExpand = []
         for sublat in self.frac_comp:
             site_WorthToExpand = True
@@ -330,23 +354,16 @@ class CEBlock(object):
         randStr = Structure.from_sites(randSites)
         randStr.make_supercell(self.matrix)
         randStr = order.apply_transformation(randStr)
-        init_occu = self.cesup.occu_from_structure(randStr)
+        init_occu = self.clus_sup.occu_from_structure(randStr)
         #print(randStr)
 
-        base_occu  = simulated_anneal(ecis=self.eci, cluster_supercell=self.cesup,occu=init_occu,ind_groups=indGrps,n_loops=20000, init_T=5100, final_T=100,n_steps=20)
+        base_occu  = simulated_anneal(ecis=self.eci, cluster_supercell=self.clus_sup,occu=init_occu,ind_groups=indGrps,n_loops=20000, init_T=5100, final_T=100,n_steps=20)
         # Sampling run
         print("Sampling.") 
 
-        occu, min_occu, min_e, rand_occu = run_T(ecis=self.eci, cluster_supercell=self.cesup, occu=deepcopy(base_occu),T=100,n_loops=100000, ind_groups = indGrps, n_rand=self.n_iniframe, check_unique=True)       
-
+        occu, min_occu, min_e, rand_occus = run_T(ecis=self.eci, cluster_supercell=self.clus_sup, occu=deepcopy(base_occu),T=100,n_loops=100000, ind_groups = indGrps, n_rand=self.n_iniframe, check_unique=True)       
         #print(rand_occu)
-        iniconfigs = self._scoccu_to_blkconfig(rand_occu)
-        #print('Ewald clusters:',self._ewald_bclusters)
-        #print('Ewald ecis:',self._ewald_ecis)
-        #print('Original clusters:',self._original_bclusters)
-        #print('Splitted clusters:',self._splitted_bclusters)
-        #print('occus',rand_occu)
-        #print('configs',iniconfigs)
+        iniconfigs = self._scoccu_to_blkconfig(rand_occus)
         return iniconfigs
     
     def _scoccu_to_blkconfig(self,rand_occu):
@@ -376,22 +393,7 @@ class CEBlock(object):
             configs.append(config)
 
         return configs
-       # positive_vars_in_sc = []
-       # for s_id,sp_id in enumerate(occu):
-       #     #print(occu)
-       #     #print(self.bit_inds_sc) bit_inds_sc is wrong!
-       #     if sp_id < len(self.bit_inds_sc[s_id]):
-       #         var =  self.bit_inds_sc[s_id][sp_id]
-       #         if var != self.num_bits_sc: 
-       #    #if var = self.num_bits_sc, then v%self.num_bits_sc = 0 will be ignored, this is not true!
-       #             positive_vars_in_sc.append(var)
-       #         else:
-       #             positive_vars_in_sc.append(0)
-       #     # the last specie is ignored.
-       #     # else:
-       #     #    var = self.bit_inds_sc[s_id][sp_id] 
-       # config=[(-v if ((v%self.num_bits_sc) not in positive_vars_in_sc) else v) for v in config]      
-               
+              
     def _config_to_soft_expression(self,config,lambdas):
     #### LinExpr class provided by gurobi is extrememly easy to manipulate and modify! For example:
     #    cond = LinExpr() //then we have an empty linear expression.
@@ -433,11 +435,9 @@ class CEBlock(object):
         #Regularize!
         return soft_expr/self.scs+self._zero_eci
 
+
     def _config_to_clusfuncs(self,config):
-    # Calculate cluster functions based on configuration of the block.
-        #print(config,len(config))
-        #print(max([max(bclus) for bclus in self._splitted_bclusters]))
-        #print(min([min(bclus) for bclus in self._splitted_bclusters]))
+        "Calculate cluster functions based on configuration of the block."
 
         original_clusfuncs = [reduce( (lambda x,y:x*y), [(1 if config[bit-1]>0 else 0) for bit in bclus])\
                                for bclus in self._original_bclusters]
@@ -446,6 +446,7 @@ class CEBlock(object):
         ewald_clusfuncs = [reduce( (lambda x,y:x*y), [(1 if config[bit-1]>0 else 0) for bit in bclus])\
                                for bclus in self._ewald_bclusters]        
         return original_clusfuncs, splitted_clusfuncs, ewald_clusfuncs
+
 
     def _set_hard_expressions(self,lambdas):
         all_hard_exprs = []
