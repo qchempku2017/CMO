@@ -85,24 +85,27 @@ class CEBlock(object):
         num_of_sclus_tosplit: This specifies how many SymmetrizedClusters are chosen for splitting. Select those with highest
                               absolute ECI values.
     '''
-    def __init__(self, clus_sup, eci, composition, block_range=1, solver='CCEHC-incomplete', hard_marker=1000000000000000,\
-                 eci_mul=1000000,n_iniframe=20,num_of_sclus_tosplit=10):
+    def __init__(self, ce, matrix, eci, composition, bit_inds, bclus_ewald, eci_ewald, block_range=1, solver='CCEHC-incomplete', \
+                 hard_marker=1000000000000000, eci_mul=1000000,n_iniframe=20,num_of_sclus_tosplit=10):
 
-        self.cesup = clus_sup
-        self.ce = clus_sup.cluster_expansion
+        self.ce = ce
+        self.clus_sup = ce.supercell_from_matrix(matrix)
         self.sym_clusters = self.ce.symmetrized_clusters
         self.clusters = self.ce.clusters
         self.eci = eci
+        self._zero_eci = self.eci[0]
 
         self.solver = solver
-
-        self._zero_eci = self.eci[0]
 
         self.composition = composition
         sp_count = sum(self.composition[0].values())
         self.frac_comp = [{sp:(float(sublat[sp])/sp_count) for sp in sublat} for sublat in composition]
 
-        self.matrix = clus_sup.supercell_matrix
+        self.bit_inds_sc = bit_inds
+        self.bclus_ewald = bclus_ewald
+        self.eci_ewald = eci_ewald       
+ 
+        self.matrix = matrix
         self.prim_to_supercell = np.linalg.inv(self.matrix)
         self.Nsite = len(clus_sup.supercell)
         self.scs = int(round(np.abs(np.linalg.det(self.matrix))))
@@ -112,124 +115,14 @@ class CEBlock(object):
         self.hard_marker=hard_marker
         self.eci_mul = eci_mul
         self.num_of_sclus_tosplit = num_of_sclus_tosplit
-        self.use_ewald = self.cesup.cluster_expansion.use_ewald
-        self.use_inv_r = self.cesup.cluster_expansion.use_inv_r
         self.fcoords = clus_sup.fcoords
         #print('fcoords:',self.fcoords)
+
         self.n_iniframe = n_iniframe
-        bit_inds_sc = []
-        b_id = 1
-        #print(clus_sup.supercell)
-        for i,site in enumerate(clus_sup.supercell):
-            site_bit_inds = []
-            for specie_id in range(len(site.species_and_occu)-1):
-            #-1 since a specie on the site is taken as reference
-                site_bit_inds.append(b_id)
-                b_id+=1
-            bit_inds_sc.append(site_bit_inds)
-        self.bit_inds_sc = bit_inds_sc
+
         #print(bit_inds_sc)
         self.num_bits_sc = b_id-1
 
-        #later we have anther variable self.bit_inds
-        if self.use_ewald:
-            print("Finding pairs corresponding to ewald interactions.")
-
-            ew_str = Structure.from_sites([PeriodicSite('H+',s.frac_coords,s.lattice) for s in clus_sup.supercell])
-            H = EwaldSummation(ew_str,eta=self.ce.eta).total_energy_matrix
-            #print('H:',H)
-        #Ewald energy E_ew = (q+r)*H*(q+r)'. I used a stupid way to get H but quite effective.
-            supbits = get_bits(clus_sup.supercell)
-            r = np.array([GetIonChg(bits[-1]) for bits in supbits])
-            chg_bits = [[GetIonChg(bit)-GetIonChg(bits[-1]) for bit in bits[:-1]] for bits in supbits]
-            
-                    
-            b_clusters_ew = []
-            eci_return_ew = []
-
-            if not self.use_inv_r:
-                eci_ew = eci[-1]
-                H_mat = np.matrix(H)
-                r_mat = np.matrix(r)
-                self._zero_eci += (r_mat*H_mat*r_mat.T)[0,0]/self.scs*eci_ew
-                #print('Zero eci:',self._zero_eci)
-
-                for i in range(len(bit_inds_sc)):
-                    for j in range(i,len(bit_inds_sc)):
-                        for k in range(len(bit_inds_sc[i])):
-                            for l in range((k if i==j else 0),len(bit_inds_sc[j])):
-                                if bit_inds_sc[i][k]!=bit_inds_sc[j][l]:
-                                    bit_a = bit_inds_sc[i][k]
-                                    bit_b = bit_inds_sc[j][l]
-                                    b_clusters_ew.append([bit_a,bit_b]) 
-                                    eci_return_ew.append(2*eci_ew*(chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
-                                else:
-                                    bit = bit_inds_sc[i][k]
-                                    b_clusters_ew.append([bit])
-                                    q_H_r = 0
-                                    for m in range(len(bit_inds_sc)):
-                                        q_H_r += 2*chg_bits[i][k]*H[i][m]*r[m]
-                                    eci_return_ew.append(eci_ew*(chg_bits[i][k]**2*H[i][i]+q_H_r))
-
-            else:
-                #When using inv_r, an independent ewald sum is generated for each specie-specie pair, and the sums are
-                #considered components of corr
-                N_sp = sum([len(site.species_and_occu) for site in clus_sup.supercell])
-                N_eweci = N_sp+N_sp*(N_sp-1)//2
-                eci_ew = eci[-N_eweci:]
-                        
-                equiv_sites = []
-                for sc,inds in clus_sup.cluster_indices:
-                    if len(sc.bits)>1:
-                        break
-                    equiv_sites.append(inds[:,0])
-
-                sp_list = []
-                sp_id = 0
-                for sublat in equiv_sites:
-                    sublat_sp_list = []
-                    for specie_id in bit_inds[sublat[0]]:
-                        sublat_sp_list.append(sp_id)
-                        sp_id += 1
-                    sp_list.extend([sublat_sp_list]*len(sublat))
-                
-                for m in range(len(bit_inds_sc)):
-                    for n in range(len(bit_inds_sc)):
-                        if m!=n:
-                            id_a = sp_list[m][-1]
-                            id_b = sp_list[n][-1]
-                            id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b - id_a -1
-                            self._zero_eci+=eci_ew[N_sp+id_abpair]*r[m]*H[m][n]*r[n]/self.scs
-                        else:
-                            id_bit = sp_list[m][-1]
-                            self._zero_eci+=eci_ew[id_bit]*r[m]**2*H[m][m]/self.scs
-                       
-                for i in range(len(bit_inds_sc)):
-                    for j in range(i,len(bit_inds_sc)):
-                        for k in range(len(bit_inds_sc[i])):
-                            for l in range((k if i==j else 0),len(bit_inds_sc[j])):
-                                if bit_inds_sc[i][k]!=bit_inds_sc[j][l]:
-                                    bit_a = bit_inds_sc[i][k]
-                                    bit_b = bit_inds_sc[j][l]
-                                    b_clusters_ew.append([bit_a,bit_b])
-                                    id_a = sp_list[i][k]
-                                    id_b = sp_list[j][l]
-                                    id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b - id_a -1 # Serial id of a,b pair in eci_ew list.
-                                    eci_return_ew.append(2*eci_ew[N_sp+id_abpair]* (chg_bits[i][k]*chg_bits[j][l]*H[i][j]))
-                                else: #Point terms
-                                    bit = bit_inds_sc[i][k]
-                                    b_clusters_ew.append([bit])
-                                    id_bit = sp_list[i][k]
-                                    point_eci = eci_ew[id_bit]*chg_bits[i][k]**2*H[i][i]
-                                    for m in range(len(bit_inds_sc)):
-                                        id_a = id_bit
-                                        id_b = sp_list[m][-1] #id of the reference specie
-                                        id_abpair = id_a*(2*N_sp-id_a-1)//2 + id_b -id_a -1
-                                        #Calculate H_r term with weight!
-                                        point_eci += 2*chg_bits[i][k]*H[i][m]*r[m]*eci_ew[N_sp+id_abpair]
-                                    eci_return_ew.append(point_eci)
-            self._ewald_bclusters = b_clusters_ew
-            self._ewald_ecis = eci_return_ew
         
         self._configs = []
         self._num_of_lambdas = None

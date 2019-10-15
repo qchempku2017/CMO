@@ -97,6 +97,9 @@ class GScanonical(MSONable):
         if self.ce.basis != '01':
             raise NotImplementedError("GS solver not implemented for other basis.")
         self.eci = eci
+        
+        self._bclus_original = None
+        self._ecis_original = None
         self._bclus_corrected = None
         self._ecis_corrected = None
         self._bit_inds = None
@@ -178,20 +181,13 @@ class GScanonical(MSONable):
             print("Enumerated supercells generated!")
         #else:    print("use existing enumlist");
         return self._enumlist
-    
+ 
     @property
-    def bclus_corrected(self):
-        """
-            Returns a list of ewald corrected bit_clusters, each element for a matrix in self.enumlist.
-        """
-
-        if (not self._bclus_corrected) or (not self._ecis_corrected) or (not self._bit_inds) \
-            or (not self._bclus_ewald) or (not self._ecis_ewald):
-            self._bclus_corrected = []
-            self._ecis_corrected = []
+    def bclus_original(self):
+        if (not self._bclus_original) or (not self._ecis_original) or (not self._bit_inds):
+            self._bclus_original = []
+            self._ecis_original = []
             self._bit_inds = []
-            self._bclus_ewald = []
-            self._ecis_ewald = []
 
             for mat in self.enumlist:
                 clus_sup = self.ce.supercell_from_matrix(mat)
@@ -199,8 +195,7 @@ class GScanonical(MSONable):
                 #Generate a refenrence table for MAXSAT var_id to specie_id. Note: MAXSAT var_id starts from 1
                 bit_inds = get_bit_inds(clus_sup.supercell)
                 self._bit_inds.append(bit_inds)
-                #print(bit_inds)
-                
+                #print(bit_inds)               
                 #Here we generate a mapping from clusters to site combos, which will be turned into clauses.
                 clusters = self.ce.clusters
                 eci = self.eci
@@ -222,35 +217,77 @@ class GScanonical(MSONable):
                             eci_return.extend([eci_new[len(sc.bits)][sc.sc_id-clusters[len(sc.bits)][0].sc_id][combo_id]\
                                                    for sc_ind in sc_inds])
 
-                if self.use_ewald:
-                    #Here we do electro-static correction. Reference zero energy state is the one that all sites 
-                    #are occupied by reference compound.
-                    print("Making up all ewald interactions for supercell:",mat,eci)
-                    
-                    b_clusters_ew, b_eci_ew = ewald_correction(self.ce,mat)
-                    #Doing real corrections to ecis
-                    for b_cluster_ew,b_eci_ew in zip(b_clusters_ew,eci_return_ew):
-                        _in_b_clusters = False
-                        for bc_id,b_cluster in enumerate(b_clusters):
-                            if len(b_cluster)!=len(b_cluster_ew):
-                                continue
-                            if len(b_cluster)==2:
-                                if b_cluster == b_cluster_ew or Reversed(b_cluster)==b_cluster_ew:                        
-                                    eci_return[bc_id]=eci_return[bc_id] + 2*b_eci_ew
-                                #*2 because a pair only appear in b_clusters_ew for once, but should be summed twice
-                                    _in_b_clusters = True
-                                    break
-                            elif len(b_cluster)==1:
-                                if b_cluster == b_cluster_ew:
-                                    eci_return[bc_id]=eci_return[bc_id] = b_eci_ew
-                                    _in_b_clusters = True
-                                    break
-                        if not _in_b_clusters:
-                            b_clusters.append(b_cluster_ew)
-                            eci_return.append(b_eci_ew if len(b_cluster_ew)==1 else: b_eci_ew*2)
-                
-                self._bclus_ewald.append(b_clusters_ew)
-                self._ecis_ewald.append(b_eci_ew)
+                self._bclus_original.append(b_clusters)
+                self._ecis_original.append(eci_return)
+        else:
+            return self._bclus_original
+    
+    @property
+    def ecis_original(self):
+        if (not self._bclus_original) or (not self._ecis_original) or (not self._bit_inds):
+            bclus_original = self.bclus_original
+        return self._ecis_original
+
+    @property
+    def bit_inds(self):
+        if (not self._bclus_original) or (not self._ecis_original) or (not self._bit_inds):     
+            bclus_original = self.bclus_original
+        return self._bit_inds
+
+    @property
+    def bclus_ewald(self):
+        if (not self._bclus_ewald) or (not self._ecis_ewald):
+            self._bclus_ewald = []
+            self._ecis_ewald = []
+            if self.use_ewald:
+                for mat in self.enumlist:
+                    bclus_ewald,eci_ewald = ewald_correction(self.ce,mat)
+                    self._bclus_ewald.append(bclus_ewald)
+                    self._ecis_ewald.append(eci_ewald)
+        return self._bclus_ewald
+
+    @property
+    def ecis_ewald(self):
+        if (not self._ecis_ewald) or (not self._bclus_ewald):           
+            bclus_ewald = self.bclus_ewald
+        return self._ecis_ewald
+
+    @property
+    def bclus_corrected(self):
+        """
+            Returns a list of ewald corrected bit_clusters, each element for a matrix in self.enumlist.
+        """
+
+        if (not self._bclus_corrected) or (not self._ecis_corrected):
+            self._bclus_corrected = []
+            self._ecis_corrected = []
+
+            for m,mat in enumerate(self.enumlist):
+                #Doing real corrections to ecis
+                b_cluster_ew = self.bclus_ewald[m].copy()
+                eci_return_ew = self.ecis_ewald[m].copy()
+                b_clusters = self.bclus_original[m].copy()
+                eci_return = self.ecis_original[m].copy()
+
+                for b_cluster_ew,b_eci_ew in zip(b_clusters_ew,eci_return_ew):
+                    _in_b_clusters = False
+                    for bc_id,b_cluster in enumerate(b_clusters):
+                        if len(b_cluster)!=len(b_cluster_ew):
+                            continue
+                        if len(b_cluster)==2:
+                            if b_cluster == b_cluster_ew or Reversed(b_cluster)==b_cluster_ew:                        
+                                eci_return[bc_id]=eci_return[bc_id] + 2*b_eci_ew
+                            #*2 because a pair only appear in b_clusters_ew for once, but should be summed twice
+                                _in_b_clusters = True
+                                break
+                        elif len(b_cluster)==1:
+                            if b_cluster == b_cluster_ew:
+                                eci_return[bc_id]=eci_return[bc_id] + b_eci_ew
+                                _in_b_clusters = True
+                                break
+                    if not _in_b_clusters:
+                        b_clusters.append(b_cluster_ew)
+                        eci_return.append(b_eci_ew if len(b_cluster_ew)==1 else: b_eci_ew*2)
 
                 self._bclus_corrected.append(b_clusters)
                 self._ecis_corrected.append(eci_return)
@@ -259,31 +296,9 @@ class GScanonical(MSONable):
 
     @property
     def ecis_corrected(self):
-        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds)\
-           or (not self._ecis_ewald) or (not self._bclus_ewald):
+        if (not self._ecis_corrected) or (not self._bclus_corrected):
             bclus_corrected = self.bclus_corrected
         return self._ecis_corrected
-
-    @property
-    def bit_inds(self):
-        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds)\
-           or (not self._ecis_ewald) or (not self._bclus_ewald):           
-            bclus_corrected = self.bclus_corrected
-        return self._bit_inds
-
-    @property
-    def bclus_ewald(self):
-        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds)\
-           or (not self._ecis_ewald) or (not self._bclus_ewald):           
-            bclus_corrected = self.bclus_corrected
-        return self._bclus_ewald
-
-    @property
-    def ecis_ewald(self):
-        if (not self._ecis_corrected) or (not self._bclus_corrected) or (not self._bit_inds)\
-           or (not self._ecis_ewald) or (not self._bclus_ewald):           
-            bclus_corrected = self.bclus_corrected
-        return self._ecis_ewald
 ####
 # Private tools for the class
 #### 
@@ -464,10 +479,10 @@ class GScanonical(MSONable):
             gs_socket.transmat=d['transmat']
         if 'enumlist' in d:
             gs_socket._enumlist=d['enumlist']
-        if 'bclus_corrected' in d and 'ecis_corrected' in d and 'bit_inds' in d and 'bclus_ewald' in d\
+        if 'bclus_original' in d and 'ecis_original' in d and 'bit_inds' in d and 'bclus_ewald' in d\
             and 'ecis_ewald' in d:
-            gs_socket._bclus_corrected = d['bclus_corrected']
-            gs_socket._ecis_corrected = d['ecis_corrected']
+            gs_socket._bclus_original = d['bclus_original']
+            gs_socket._ecis_original = d['ecis_original']
             gs_socket._bit_inds = d['bit_inds']
             gs_socket._bclus_ewald = d['bclus_ewald']
             gs_socket._ecis_ewald = d['ecis_ewald']
@@ -497,8 +512,8 @@ class GScanonical(MSONable):
                 'str_upper':self.str_upper.as_dict(),\
                 'transmat':self.transmat,\
                 'enumlist':self.enumlist,\
-                'bclus_corrected':self.bclus_corrected,\
-                'ecis_corrected':self.ecis_corrected,\
+                'bclus_original':self.bclus_original,\
+                'ecis_original':self.ecis_original,\
                 'bit_inds':self.bit_inds,\
                 'bclus_ewald':self.bclus_ewald,\
                 'ecis_ewald':self.ecis_ewald,\
