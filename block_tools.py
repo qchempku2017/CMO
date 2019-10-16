@@ -11,44 +11,42 @@ from pymatgen.analysis.ewald import EwaldSummation
 import numpy as np
 import random
 
-from itertools import product
+from itertools import product,chain
 from utils import *
 
 ##### Tool functions #####
 SITE_TOL = 1E-5
 def _allclose_pbc(p1,p2):
-    pbc = np.array(list(product([-1.0,0.0,1.0],[-1.0,0.0,1.0],[-1.0,0.0,1.0])))
-    for dr in pbc:
-        if np.allclose(dr,p1-p2):
-            return True
-    return False
+    """
+    differences in fractional coords must be integers.
+    """
+    dr = p1-p2
+    return np.allclose(dr,np.floor(dr))
 
 def _coord_list_mapping_blockonly(subset,superset,blkrange,atol=SITE_TOL):
-    '''
+    """
        This is a revised version of coord_list_mapping_pbc in pymatgen. Here we will give a mapping of contained cluster sites
        into supercell sites.
        The sites in a supercell are marked as 1,2,3,...,N_site, and corresponding sites in its neighbor with displacement 
        will be marked as site=site_in_sc+(x*(range+1)**2+y*(range+1)+z)*N_site
        Here we map cluster by cluster.
        Note: This can still be improved in efficiency.
-    '''
+    """
     point_inds = []
-    #print(subset)
-    #print(superset)
+   
     for point in subset:
+        if point[0]<0 or point[1]<0 or point[2]<0:
+            #print("Cluster {} not contained in supercell.".format(subset))
+            return None
         disp = np.floor(point)
         x = disp[0]
         y = disp[1]
         z = disp[2]
-        if point[0]<0 or point[1]<0 or point[2]<0:
-            #print("Cluster {} not contained in supercell.".format(subset))
-            return None
-        point_in_sc = point-disp
         #print(point_in_sc)
 
         for p_id,p in enumerate(superset):
             #print(p,point_in_sc,_allclose_pbc(p,point_in_sc))
-            if _allclose_pbc(p,point_in_sc):
+            if _allclose_pbc(p,point):
                 point_id_in_sc=p_id
                 #print(point_id_in_sc)
                 break
@@ -88,14 +86,14 @@ class CEBlock(object):
     '''
     def __init__(self, ce, matrix, eci, composition, bclus_ewald=[], eci_ewald=[],\
                  block_range=1, solver='CCEHC-incomplete', init_method = 'random'\
-                 hard_marker=1000000000000000, eci_mul=1000000,n_iniframe=20,num_of_sclus_tosplit=10):
+                 hard_marker=1000000000000000, eci_mul=1000000,n_iniframe=20,cutoff_eciabs=1E-4):
 
         self.ce = ce
         self.clus_sup = ce.supercell_from_matrix(matrix)
         self.sym_clusters = self.ce.symmetrized_clusters
         self.clusters = self.ce.clusters
         self.eci = eci
-        self._zero_eci = self.eci[0]
+        self.zero_eci = self.eci[0]
 
         self.solver = solver
         self.init_method = init_method
@@ -105,9 +103,8 @@ class CEBlock(object):
         self.frac_comp = [{sp:(float(sublat[sp])/sp_count) for sp in sublat} for sublat in composition]
 
         self.bit_inds_sc = get_bit_inds(clus_sup.supercell)
-        self.bclus_ewald = bclus_ewald
-        self.eci_ewald = eci_ewald       
- 
+        self.num_bits_sc = max(itertools.chain(*self.bit_inds_sc))
+
         self.matrix = matrix
         self.prim_to_supercell = np.linalg.inv(self.matrix)
         self.Nsite = len(clus_sup.supercell)
@@ -115,6 +112,8 @@ class CEBlock(object):
         self.prim = clus_sup.cluster_expansion.structure
 
         self.blkrange = block_range
+        self.n_split = (self.blkrange+1)**3-1
+
         self.hard_marker=hard_marker
         self.eci_mul = eci_mul
         self.num_of_sclus_tosplit = num_of_sclus_tosplit
@@ -124,67 +123,218 @@ class CEBlock(object):
         self.n_iniframe = n_iniframe
 
         #print(bit_inds_sc)
-        self.num_bits_sc = b_id-1
 
         
-        self._configs = []
-        self._num_of_lambdas = None
+        self._configs = None
+        #Only bclusters with |eci|>self.cutoff_eciabs will be splitted
+
+        self.cutoff_eciabs = cutoff_eciabs
         self._blkenergy = None
         self._lambda_param = None
 
-        self._splitted_bclusters = []
-        self._splitted_ecis = []        
-        self._original_bclusters = []
-        self._original_ecis = []
-        
+        self._contained_cluster_indices = None
+
+        self._splitted_bclusters = None
+        self._splitted_ecis = None
+        self._splitted_ori_id = None        
+        self._original_bclusters = None
+        self._original_ecis = None
+ 
+        self._max_bit = None 
+        self._max_site = None
+        self._num_of_vars = None 
+      
         if self.ce.use_ewald and (len(bclus_ewald)==0 or len(eci_ewald)==0):
             raise ValueError("Cluster expansion requires ewald correction, but none was given.")
-        self._ewald_bclusters = bclus_ewald
-        self._ewald_ecis = eci_ewald
+        self.ewald_bclusters = bclus_ewald
+        self.ewald_ecis = eci_ewald
         
-        self._initialize()
-        
-#### public socket ####
+
+#### properties ####
+    @property
+    def contained_cluster_indices(self):
+        if self._contained_cluster_indices is None:
+            print("Mapping symmetrized bit-clusters in the new rule.")
+            ts = lattice_points_in_supercell(self.matrix)
+            self._contained_cluster_indices = []
+    
+            for sc in self.sym_clusters:
+                #print("Processing symmetrized cluster {}".format(sc))
+                prim_fcoords = np.array([c.sites for c in sc.equivalent_clusters])
+                fcoords = np.dot(prim_fcoords, self.prim_to_supercell)
+                #tcoords contains all the coordinates of the symmetrically equivalent clusters
+                #the indices are: [equivalent cluster (primitive cell), translational image, index of site in cluster, coordinate index]
+                tcoords = fcoords[:, None, :, :] + ts[None, :, None, :]
+                tcs = tcoords.shape
+                tcoords_by_clusters = tcoords.reshape(-1,tcs[2],3)
+                all_inds = []
+                for cluster in tcoords_by_clusters:
+                    inds = _coord_list_mapping_blockonly(cluster, self.fcoords, self.blkrange,\
+                           atol=SITE_TOL)
+                    if inds is not None:
+                        all_inds.append(inds)
+                self._contained_cluster_indices.append((sc, np.array(all_inds)))            
+                # I revised the boundary condition of pbc mapping, to give only clusters that are 'contained' in a SC, and a cluster is 
+                # no longer wrapped by periodic condition.
+            print("Clusters trimmed and mapped!")
+        return self._contained_cluster_indices
+
+    @property
+    def original_bclusters(self):
+        """
+        All the bit_clusters 'positive-contained' in the boundary of a supercell. Not splitted to their images yet.
+        """
+        if self._original_bclusters is None or self._original_ecis is None:
+            self._original_bclusters = []
+            self._original_ecis = []
+            bit_inds = self.bit_inds_sc 
+           
+            for sc,sc_inds in self.contained_cluster_indices:
+                for i,combo_orbit in enumerate(sc.bit_combos):
+                    for j,combo in enumerate(combo_orbit):
+                        for sc_ind in sc_inds:
+                            bclus = []
+                            for s,site in enumerate(sc_ind):
+                            #site=site_in_sc+(x*(range+1)**2+y*(range+1)+z)*N_site
+                                site_in_sc = site%self.Nsite
+                                dz = (site//self.Nsite)%(self.blkrange+1)
+                                dy = (site//self.Nsite)//(self.blkrange+1)%(self.blkrange+1)
+                                dx = (site//self.Nsite)//(self.blkrange+1)//(self.blkrange+1)
+                                bit_in_sc = bit_inds[site_in_sc][combo[s]]
+                                bit = bit_in_sc+(dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
+                                bclus.append(bit)
+                            self._original_bclusters.append(bclus)
+
+                        #Remember the structure of danill's eci array? The first term should be zero clus, and sc_b_id starts from 1
+                        eci_new = {size:[self.eci[(sc.sc_b_id):(sc.sc_b_id+len(sc.bit_combos))] for sc in self.clusters[size]] \
+                                   for size in self.clusters}
+    
+                        #combo_id = sum([len(orbit) for orbit in sc.bit_combos[:i]])+j
+                        #one eci for one orbit.
+    
+                        bit_multip = sc.multiplicity*len(combo_orbit)
+                        self._original_ecis.extend([eci_new[len(sc.bits)][sc.sc_id-self.clusters[len(sc.bits)][0].sc_id][i]/bit_multip\
+                                                      for sc_ind in sc_inds])
+        return self._original_bclusters
+    
+    @property
+    def original_ecis(self):
+        if self._original_bclusters is None or self._original_ecis is None:
+            original_bclusters = self.original_bclusters
+        return self._original_ecis
+
+    @property
+     def splitted_bclusters(self):
+        # Mapping rule of a site indexed i in original SC to images:(x:+x, y:+y, z:+z)(x,y,z<=extend_range):
+        # new_index = i + (x*(range+1)**2+y*(range+1)+z)*n_bits_sc
+        # When range=1, a clustere would be splitted into 7 images.
+         if self._splitted_bclusters is None or self._splitted_ecis is None or self._splitted_ori_id is None:
+             self._splitted_ori_id = []
+             self._splitted_ecis = []
+             self._splitted_bclusters = []
+             # id of splitted clusters in self._original_bclusters. This is important because not 
+             #all clusters are splitted
+             # How many images will one original cluster be splitted into.
+             for i,(bclus,eci) in enumerate(zip(self.original_bclusters,self.original_ecis)):
+                 if abs(eci)>=self._cutoff_eciabs:
+                     for x in range(self.blkrange+1):
+                         for y in range(self.blkrange+1):
+                            for z in range(self.blkrange+1):
+                               if x==0 and y==0 and z==0:
+                                   continue
+                               bclus_xyzimage = [idx + (x*(self.blkrange+1)**2 + y*(self.blkrange+1) + z)* self.num_bits_sc for idx in bclus]
+                               self._splitted_bclusters.append(bclus_xyzimage)
+                               self._splitted_ecis.append(eci)
+                     self._splitted_ori_id.append(i)
+         return self._splitted_bclusters
+
+    @property      
+    def splitted_ecis(self):
+        if self._splitted_bclusters is None or self._splitted_ecis is None or self._splitted_ori_id is None:
+            splitted_bclusters = self.splitted_bclusters
+        return self._splitted_ecis
+
+    @property      
+    def splitted_ori_id(self):
+        """
+        This list specifies the location of a splitted cluster's original image in self._original_bclusters
+        """
+        if self._splitted_bclusters is None or self._splitted_ecis is None or self._splitted_ori_id is None:
+            splitted_bclusters = self.splitted_bclusters
+        return self._splitted_ecis
+
+    @property
+    def max_bit(self):
+        if self._max_bit is None:
+            self._max_bit = max(itertools.chain(*self.splitted_bclusters))
+        return self._max_bit
+
+    @property
+    def num_of_vars(self):
+        if self._num_of_vars is None or self._max_site is None:
+            max_bit_orimage = (self.max_bit-1)%self.num_bits_sc+1
+            #bit starts from 1
+            for s, site in enumerate(self.bit_inds_sc):
+                if max_bit_orimage in site:
+                    max_site_orimage = s
+                    break
+            z = self.max_bit//self.num_bits_sc%(self.blkrange+1)
+            y = self.max_bit//self.num_bits_sc//(self.blkrange+1)%(self.blkrange+1)
+            x = self.max_bit//self.num_bits_sc//(self.blkrange+1)//(self.blkrange+1)
+            max_site = max_site_orimage+(x*(self.blkrange+1)**2+y*(self.blkrange+1)+z)*self.Nsite
+            self._max_site=max_site
+            self._num_of_vars = max(self.bit_inds_sc[max_site_orimage])+\
+                             +(x*(self.blkrange+1)**2+y*(self.blkrange+1)+z)*self.num_bits_sc
+        return self._num_of_vars
+
+    @property
+    def max_site(self):
+        if self._max_site is None or self._num_of_vars is None:
+            nv = self.num_of_vars
+        return self._max_site
+
+    @property
+    def num_of_lambdas(self):
+        return len(self.splitted_bclusters)
+
+#### public callable methods ####
     def solve(self):
         '''
         Generate some configurations(low energy ones) and form facets with them. Optimize LP. See if block energy has converged.
         If not, update lambdas with LP results and solve MAXSAT with new lambda set, and add the newly solved block config to it,
         until E converges or no new configs emerges.
         '''
-        self._configs=self._initialize()
-        #print(self._configs)
-        #print("Original:",self._original_bclusters)
-        #print("Original num:",len(self._original_bclusters))
-        #print("Those Splitted:",self._splitted_ori_id)
-        #print("num splitted:",len(self._splitted_ori_id))
-        #print("num of lambdas:",self._num_of_lambdas)
-        #self._num_of_lambdas=len(self._splitted_bclusters)
+        
+        print("Number of variables:",self.num_of_vars)
+        if self._configs is None:
+            self._configs=self._initialize()
+            print("Initialized with {} configs.".format(self.n_iniframe))
+
         while True:
             m = Model("lambda-solving")
-            lambdas = m.addVars(self._num_of_lambdas,ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
+            lambdas = m.addVars(self.num_of_lambdas,,lb=0.0, ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
             E = m.addVar(vtype=GRB.CONTINUOUS,name="E",lb=-GRB.INFINITY, ub=GRB.INFINITY)
             m.update()
             m.setObjective(E,GRB.MAXIMIZE)
    
             # weight of all original clusters shouldn't be less than 0. 'Hard' constraints.
             all_hard = self._set_hard_expressions(lambdas)
-            #print("Lambdas:",self._num_of_lambdas)
+            #print("Lambdas:",self.num_of_lambdas)
             for hard in all_hard:
                 #print("Hard:\n",hard)
                 m.addConstr(hard<=1.0)
-                m.update()
 
             # E = sum(J*Clus), to maximize E, use E-sum(J*clus)<=0, 'soft' constraints.
             for config in self._configs:
                 soft_expr = self._config_to_soft_expression(config,lambdas)
                 #print("Soft:\n",soft_expr)
                 m.addConstr(E<=soft_expr)
-                m.update()
-            
+
+            m.update()           
             m.optimize()
             self._lambda_param = [lambdas[v_id].x for v_id in lambdas]
             blkenergy = m.objVal
-            if self._blkenergy:
+            if self._blkenergy is not None:
                 if abs(self._blkenergy-blkenergy)<0.001:
                     print("Lowerbound for composition {} converged.".format(self.composition))
                     break
@@ -203,120 +353,15 @@ class CEBlock(object):
             self._configs.append(new_config)
         return self._blkenergy
             
+
+
 #### private tools ####
-    # a_config = tuple(vars_in_sc,vars_in_sc_x+1,vars_in_sc_y+1,vars_in+sc_z+1)
-    # a_clusterfunc_set = tuple(in_sc(ewald_corrected, if needed),in_sc_x+1,in_sc_y+1,in_sc_z+1)
 
     def _initialize(self):
-    # Set initial configurations of {s} using MC method.
-        print("Mapping symmetrized bit-clusters in the new rule.")
-        ts = lattice_points_in_supercell(self.matrix)
-        self.contained_cluster_indices = []
-
-        for sc in self.sym_clusters:
-            print("Processing symmetrized cluster {}".format(sc))
-            prim_fcoords = np.array([c.sites for c in sc.equivalent_clusters])
-            fcoords = np.dot(prim_fcoords, self.prim_to_supercell)
-            #tcoords contains all the coordinates of the symmetrically equivalent clusters
-            #the indices are: [equivalent cluster (primitive cell), translational image, index of site in cluster, coordinate index]
-            tcoords = fcoords[:, None, :, :] + ts[None, :, None, :]
-            tcs = tcoords.shape
-            tcoords_by_clusters = tcoords.reshape(-1,tcs[2],3)
-            all_inds = []
-            for cluster in tcoords_by_clusters:
-                inds = _coord_list_mapping_blockonly(cluster, self.fcoords, self.blkrange,\
-                       atol=SITE_TOL)
-                if inds is not None:
-                    all_inds.append(inds)
-            self.contained_cluster_indices.append((sc, np.array(all_inds)))            
-            # I revised the boundary condition of pbc mapping, to give only clusters that are 'contained' in a SC, and a cluster is 
-            # no longer wrapped by periodic condition.
-        print("Clusters trimmed and mapped!")
-        
-        #Don't cutoff when multiplicity is not clear! 
-        self._cutoff_eciabs = abs(sorted(self.eci[1:-1],key=lambda x:abs(x))[-self.num_of_sclus_tosplit])
-        print("cutoff |eci|:",self._cutoff_eciabs)
-        #bclusters with abs(eci)<_cutoff_eciabs will not be splitted.
-
-        bit_inds = self.bit_inds_sc 
-       
-        for sc,sc_inds in self.contained_cluster_indices:
-            for i,combo_orbit in enumerate(sc.bit_combos):
-                for j,combo in enumerate(combo_orbit):
-                    for sc_ind in sc_inds:
-                        bclus = []
-                        for s,site in enumerate(sc_ind):
-                        #site=site_in_sc+(x*(range+1)**2+y*(range+1)+z)*N_site
-                            site_in_sc = site%self.Nsite
-                            dz = (site//self.Nsite)%(self.blkrange+1)
-                            dy = (site//self.Nsite)//(self.blkrange+1)%(self.blkrange+1)
-                            dx = (site//self.Nsite)//(self.blkrange+1)//(self.blkrange+1)
-                            bit_in_sc = bit_inds[site_in_sc][combo[s]]
-                            bit = bit_in_sc+(dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
-                            bclus.append(bit)
-                        self._original_bclusters.append(bclus)
-                    #self._original_bclusters.extend([[ bit_inds[site][combo[s]] for s,site in enumerate(sc_ind)]\
-                    #                              for sc_ind in sc_inds])  
-                    #need to map extended 'site' back, and need to do the splitting here.
-                    #Remember the structure of danill's eci array? The first term should be zero clus.
-                    eci_new = {size:[self.eci[(sc.sc_b_id):(sc.sc_b_id+len(sc.bit_combos))] for sc in self.clusters[size]] \
-                               for size in self.clusters}
-
-                    #combo_id = sum([len(orbit) for orbit in sc.bit_combos[:i]])+j
-                    #one eci for one orbit.
-
-                    bit_multip = sc.multiplicity*len(combo_orbit)
-                    self._original_ecis.extend([eci_new[len(sc.bits)][sc.sc_id-self.clusters[len(sc.bits)][0].sc_id][i]/bit_multip\
-                                                  for sc_ind in sc_inds])
-        
-        #### Splitting and extension. Trivial. ####
-        # Mapping rule of a site indexed i in original SC to supercell:(x:+x, y:+y, z:+z)(x,y,z<=extend_range):
-        # new_index = i + (x*(range+1)**2+y*(range+1)+z)*n_bits_sc
-        # When range=1, a clustere would be splitted into 7 images.
-        
-        self._splitted_ori_id = []
-        # id of splitted clusters in self._original_bclusters. This is important because not 
-        #all clusters are splitted
-        self._n_split = (self.blkrange+1)**3-1
-        # How many images will one original cluster be splitted into.
-        for i,(bclus,eci) in enumerate(zip(self._original_bclusters,self._original_ecis)):
-            if abs(eci)>=self._cutoff_eciabs:
-                for x in range(self.blkrange+1):
-                    for y in range(self.blkrange+1):
-                       for z in range(self.blkrange+1):
-                          if x==0 and y==0 and z==0:
-                              continue
-                          bclus_xyzimage = [idx + (x*(self.blkrange+1)**2 + y*(self.blkrange+1) + z)* self.num_bits_sc for idx in bclus]
-                          self._splitted_bclusters.append(bclus_xyzimage)
-                          self._splitted_ecis.append(eci)
-                self._splitted_ori_id.append(i)
-
-        # self.num_of_vars = max([max(bclus) for bclus in self._splitted_bclusters])
-        # No! Things are not that simple, when you consider sum(s)=1 constraint for a site!
-        max_bit = max([max(bclus) for bclus in self._splitted_bclusters])
-        max_bit_orimage = (max_bit-1)%self.num_bits_sc+1
-        #bit starts from 1
-        for s, site in enumerate(self.bit_inds_sc):
-            if max_bit_orimage in site:
-                max_site_orimage = s
-                break
-        z = max_bit//self.num_bits_sc%(self.blkrange+1)
-        y = max_bit//self.num_bits_sc//(self.blkrange+1)%(self.blkrange+1)
-        x = max_bit//self.num_bits_sc//(self.blkrange+1)//(self.blkrange+1)
-        max_site = max_site_orimage+(x*(self.blkrange+1)**2+y*(self.blkrange+1)+z)*self.Nsite
-        self.max_site=max_site
-        self.max_bit = max_bit
-        self.num_of_vars = max(self.bit_inds_sc[max_site_orimage])+\
-                         +(x*(self.blkrange+1)**2+y*(self.blkrange+1)+z)*self.num_bits_sc
-
-        print("Number of variables:",self.num_of_vars)
-
-        self._num_of_lambdas = len(self._splitted_bclusters)
-        #Checking splitting correctness
-        if self._n_split*len(self._splitted_ori_id)!=self._num_of_lambdas:
-            print('Splitting pattern wrong. Exiting!')
-            return
-
+        """
+        a_config = tuple(vars_in_sc,vars_in_sc_x+1,vars_in_sc_y+1,vars_in+sc_z+1)
+        a_clusterfunc_set = tuple(in_sc(ewald_corrected, if needed),in_sc_x+1,in_sc_y+1,in_sc_z+1)
+        """
         if self.init_method = 'mc':
             iniconfigs = self._mc_sampling()
         elif self.init_method = 'random':
@@ -326,16 +371,30 @@ class CEBlock(object):
         return iniconfigs
     
     def _rand_sampling(self):
-        "Random choice of block"
-        configs = []
+        """
+        Complete random intialization of a block
+        """
+        import copy
+        rand_occus = []
+        disorderSites = []
+        for i,site in enumerate(self.prim):
+            disorderSite = PeriodicSite(self.frac_comp[i],site.frac_coords,self.prim.lattice,properties=site.properties)
+            disorderSites.append(disorderSite)
+        disorderStr = Structure.from_sites(disorderSites)
+        disorderStr.make_supercell(self.matrix)
+
         for i in range(self.n_iniframe):
-            config = [(b if random.random()>0.5 else -b) for b in range(1,self.num_of_vars+1)]
-            configs.append(config)
-        return config       
+            order = OrderDisorderedStructureTransformation(algo=2)
+            randStr = copy.deepcopy(disorderStr)
+            randStr = order.apply_transformation(randStr)
+            rand_occus.append(self.clus_sup.occu_from_structure(randStr))
+        iniconfigs = self._scoccu_to_blkconfig(rand_occus)
+        return iniconfigs      
     
     def _mc_sampling(self):
-        "Pile up mc low energy supercells to make a block."
-
+        """
+        Pile up mc low energy supercells to make a block.
+        """
         sites_WorthToExpand = []
         for sublat in self.frac_comp:
             site_WorthToExpand = True
@@ -403,57 +462,57 @@ class CEBlock(object):
         o_clusfuncs,s_clusfuncs,e_clusfuncs=self._config_to_clusfuncs(config)
         #print(config)
         soft_expr = LinExpr()
-        ewald_term = 0
-        clus_term = self._zero_eci*self.scs
-        #soft_expr.add(self._zero_eci)
+        #ewald_term = 0
+        #clus_term = self.zero_eci*self.scs
+        soft_expr.add(self.zero_eci*self.scs)
         for i,clusfunc in enumerate(s_clusfuncs):
             if clusfunc!=0:
-                soft_expr.add(clusfunc*self._splitted_ecis[i]*lambdas[i])
+                soft_expr.add(clusfunc*self.splitted_ecis[i]*lambdas[i])
         for i,clusfunc in enumerate(e_clusfuncs):
             if clusfunc!=0:
-                soft_expr.add(clusfunc*self._ewald_ecis[i])
-                ewald_term+=self._ewald_ecis[i]
+                soft_expr.add(clusfunc*self.ewald_ecis[i])
+                #ewald_term+=self.ewald_ecis[i]
         for i,clusfunc in enumerate(o_clusfuncs):
             # When this cluster is a splitted.
-            if i in self._splitted_ori_id:
-                pos = self._splitted_ori_id.index(i)
-                extended_ids = list(range(pos*self._n_split,(pos+1)*self._n_split))
+            if i in self.splitted_ori_id:
+                pos = self.splitted_ori_id.index(i)
+                extended_ids = list(range(pos*self.n_split,(pos+1)*self.n_split))
                 hard_expr = LinExpr()
                 for e_id in extended_ids:
                     hard_expr.add(lambdas[e_id])
                 if clusfunc!=0:
-                    soft_expr.add(clusfunc*self._original_ecis[i]*(1-hard_expr))
-                    clus_term += self._original_ecis[i]
+                    soft_expr.add(clusfunc*self.original_ecis[i]*(1-hard_expr))
+                    #clus_term += self.original_ecis[i]
             # When this cluster is not splitted.
             else:
                 if clusfunc!=0:
-                    soft_expr.add(clusfunc*self._original_ecis[i])
-                    clus_term += self._original_ecis[i]
+                    soft_expr.add(clusfunc*self.original_ecis[i])
+                    #clus_term += self.original_ecis[i]
 
         #print("ewald term for sc:",ewald_term,"clus term for sc:",clus_term,"scs",self.scs)
 
         #Regularize!
-        return soft_expr/self.scs+self._zero_eci
+        return soft_expr/self.scs
 
 
     def _config_to_clusfuncs(self,config):
         "Calculate cluster functions based on configuration of the block."
 
         original_clusfuncs = [reduce( (lambda x,y:x*y), [(1 if config[bit-1]>0 else 0) for bit in bclus])\
-                               for bclus in self._original_bclusters]
+                               for bclus in self.original_bclusters]
         splitted_clusfuncs = [reduce( (lambda x,y:x*y), [(1 if config[bit-1]>0 else 0) for bit in bclus])\
-                               for bclus in self._splitted_bclusters]  
+                               for bclus in self.splitted_bclusters]  
         ewald_clusfuncs = [reduce( (lambda x,y:x*y), [(1 if config[bit-1]>0 else 0) for bit in bclus])\
-                               for bclus in self._ewald_bclusters]        
+                               for bclus in self.ewald_bclusters]        
         return original_clusfuncs, splitted_clusfuncs, ewald_clusfuncs
 
 
     def _set_hard_expressions(self,lambdas):
         all_hard_exprs = []
         #for id0,(bclus,eci) in enumerate(zip(self._original_bclusters,self._original_ecis)):
-        for pos,id0 in enumerate(self._splitted_ori_id):
+        for pos,id0 in enumerate(self.splitted_ori_id):
             #pos = self._splitted_ori_id.index(id0)
-            extended_ids = list(range(pos*self._n_split,(pos+1)*self._n_split))
+            extended_ids = list(range(pos*self.n_split,(pos+1)*self.n_split))
             hard_expr = LinExpr()
             for e_id in extended_ids:
                 hard_expr.add(lambdas[e_id])
@@ -466,39 +525,48 @@ class CEBlock(object):
         '''
         maxsat_bclusters = []
         maxsat_ecis = []
-        for id0,(bclus,eci) in enumerate(zip(self._original_bclusters,self._original_ecis)):
+        for id0,(bclus,eci) in enumerate(zip(self.original_bclusters,self.original_ecis)):
             maxsat_bclusters.append(bclus)
-            if id0 in self._splitted_ori_id:
-                pos = self._splitted_ori_id.index(id0)
-                extended_ids = list(range(pos*self._n_split,(pos+1)*self._n_split))
+            if id0 in self.splitted_ori_id:
+                pos = self.splitted_ori_id.index(id0)
+                extended_ids = list(range(pos*self.n_split,(pos+1)*self.n_split))
             # id of bclustet's images in neighboring supercells.
                 splitted_sum = 0
                 for ext_id in extended_ids:
                     splitted_sum+=self._lambda_param[ext_id]
                 maxsat_ecis.append((1-splitted_sum)*eci)
                 for ext_id in extended_ids:
-                    maxsat_bclusters.append(self._splitted_bclusters[ext_id])
-                    maxsat_ecis.append(self._splitted_ecis[ext_id]*self._lambda_param[ext_id])
+                    maxsat_bclusters.append(self.splitted_bclusters[ext_id])
+                    maxsat_ecis.append(self.splitted_ecis[ext_id]*self._lambda_param[ext_id])
             else:
                 maxsat_ecis.append(eci)
             # Please, please do not merge the two cycles! Or you will breaking the corresponding relation between bclus and eci!
 
-        for bclus_ew,eci in zip(self._ewald_bclusters,self._ewald_ecis):
+        for bclus_ew,eci in zip(self.ewald_bclusters,self.ewald_ecis):
             _in_b_clusters = False
             for bc_id,bclus in enumerate(maxsat_bclusters):
                 if len(bclus)>2:
                     continue
                 if bclus_ew == bclus or bclus_ew == Reversed(bclus):
-                    maxsat_ecis[bc_id]=maxsat_ecis[bc_id]+2*eci
-                    _in_b_clusters = True
-                    break
+                    if len(bclus_ew)==2:
+                        maxsat_ecis[bc_id]=maxsat_ecis[bc_id]+2*eci
+                        _in_b_clusters = True
+                        break
+                    elif len(bclus_ew)==1:
+                        maxsat_ecis[bc_id]=maxsat_ecis[bc_id]+eci
+                        _in_b_clusters = True
+                        break
                 if not _in_b_clusters:
-                    maxsat_bclusters.append(bclus_ew)
-                    maxsat_ecis.append(eci*2)
+                    if len(bclus_ew)==2:
+                        maxsat_bclusters.append(bclus_ew)
+                        maxsat_ecis.append(eci*2)
+                    elif len(bclus_ew)==1:
+                        maxsat_bclusters.append(bclus_ew)
+                        maxsat_ecis.append(eci)
         return maxsat_bclusters,maxsat_ecis
 
     def _Write_MAXSAT_input_forblk(self,soft_bcs,soft_ecis):
-        print('Preparing MAXSAT input file.')
+        print('Preparing MAXSAT input file for LB convergence')
         soft_cls = []
         hard_cls = []
         
