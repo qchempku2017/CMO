@@ -14,10 +14,6 @@ import random
 from itertools import product,chain
 from utils import *
 
-"""
-    Note: Now using openwbo as the only solver.
-"""
-
 ##### Tool functions #####
 SITE_TOL = 1E-5
 def _allclose_pbc(p1,p2):
@@ -89,7 +85,8 @@ class CEBlock(object):
                               absolute ECI values.
     '''
     def __init__(self, ce, matrix, eci, composition, bclus_ewald=[], eci_ewald=[],\
-                 block_range=1, init_method = 'random', n_iniframe=20,cutoff_eciabs=1E-4):
+                 block_range=1, solver='CCEHC-incomplete', init_method = 'random'\
+                 hard_marker=1000000000000000, eci_mul=1000000,n_iniframe=20,cutoff_eciabs=1E-4):
 
         self.ce = ce
         self.clus_sup = ce.supercell_from_matrix(matrix)
@@ -98,6 +95,7 @@ class CEBlock(object):
         self.eci = eci
         self.zero_eci = self.eci[0]
 
+        self.solver = solver
         self.init_method = init_method
 
         self.composition = composition
@@ -116,9 +114,16 @@ class CEBlock(object):
         self.blkrange = block_range
         self.n_split = (self.blkrange+1)**3-1
 
+        self.hard_marker=hard_marker
+        self.eci_mul = eci_mul
         self.num_of_sclus_tosplit = num_of_sclus_tosplit
         self.fcoords = clus_sup.fcoords
+        #print('fcoords:',self.fcoords)
+
         self.n_iniframe = n_iniframe
+
+        #print(bit_inds_sc)
+
         
         self._configs = None
         #Only bclusters with |eci|>self.cutoff_eciabs will be splitted
@@ -141,7 +146,6 @@ class CEBlock(object):
       
         if self.ce.use_ewald and (len(bclus_ewald)==0 or len(eci_ewald)==0):
             raise ValueError("Cluster expansion requires ewald correction, but none was given.")
-
         self.ewald_bclusters = bclus_ewald
         self.ewald_ecis = eci_ewald
         
@@ -269,14 +273,14 @@ class CEBlock(object):
     def num_of_vars(self):
         if self._num_of_vars is None or self._max_site is None:
             max_bit_orimage = (self.max_bit-1)%self.num_bits_sc+1
-            #bit starts from 1, so should -1 before reference
+            #bit starts from 1
             for s, site in enumerate(self.bit_inds_sc):
                 if max_bit_orimage in site:
                     max_site_orimage = s
                     break
-            z = (self.max_bit-1)//self.num_bits_sc%(self.blkrange+1)
-            y = (self.max_bit-1)//self.num_bits_sc//(self.blkrange+1)%(self.blkrange+1)
-            x = (self.max_bit-1)//self.num_bits_sc//(self.blkrange+1)//(self.blkrange+1)
+            z = self.max_bit//self.num_bits_sc%(self.blkrange+1)
+            y = self.max_bit//self.num_bits_sc//(self.blkrange+1)%(self.blkrange+1)
+            x = self.max_bit//self.num_bits_sc//(self.blkrange+1)//(self.blkrange+1)
             max_site = max_site_orimage+(x*(self.blkrange+1)**2+y*(self.blkrange+1)+z)*self.Nsite
             self._max_site=max_site
             self._num_of_vars = max(self.bit_inds_sc[max_site_orimage])+\
@@ -306,10 +310,7 @@ class CEBlock(object):
             self._configs=self._initialize()
             print("Initialized with {} configs.".format(self.n_iniframe))
 
-        import time
-        start_time = time.time()
-        while time.time()-start_time<=7200: #2h time limit
-            # solving linear model
+        while True:
             m = Model("lambda-solving")
             lambdas = m.addVars(self.num_of_lambdas,,lb=0.0, ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
             E = m.addVar(vtype=GRB.CONTINUOUS,name="E",lb=-GRB.INFINITY, ub=GRB.INFINITY)
@@ -318,15 +319,17 @@ class CEBlock(object):
    
             # weight of all original clusters shouldn't be less than 0. 'Hard' constraints.
             all_hard = self._set_hard_expressions(lambdas)
+            #print("Lambdas:",self.num_of_lambdas)
             for hard in all_hard:
+                #print("Hard:\n",hard)
                 m.addConstr(hard<=1.0)
 
             # E = sum(J*Clus), to maximize E, use E-sum(J*clus)<=0, 'soft' constraints.
             for config in self._configs:
                 soft_expr = self._config_to_soft_expression(config,lambdas)
+                #print("Soft:\n",soft_expr)
                 m.addConstr(E<=soft_expr)
 
-            m.setParam(GRB.Param.TimeLimit, 1800)
             m.update()           
             m.optimize()
             self._lambda_param = [lambdas[v_id].x for v_id in lambdas]
@@ -337,11 +340,10 @@ class CEBlock(object):
                     break
 
             maxsat_bclus,maxsat_ecis=self._form_maxsat()
-            mx_model,x = self._maxsat_model_forblk(maxsat_bclus,maxsat_ecis)
-            mx_model.optimize()
+            self._Write_MAXSAT_input_forblk(maxsat_bclus,maxsat_ecis)
 
-            new_config = [(x_id+1) for x_id in x if x[x_id].x else -(x_id+1)]
-            new_config = sorted(new_config,key=lambda x:abs(x))
+            Call_MAXSAT(solver=self.solver)
+            new_config = Read_MAXSAT()[:self.num_of_vars]
 
             if new_config in self._configs:
                 print("Lowerbound for composition {} converged.".format(self.composition))
@@ -349,12 +351,10 @@ class CEBlock(object):
 
             self._blkenergy = blkenergy
             self._configs.append(new_config)
-
-        if time.time()-start_time>7200:
-            print("Warning: LB calculation exceeded 2h time limit, but still not converged!")
-
         return self._blkenergy
             
+
+
 #### private tools ####
 
     def _initialize(self):
@@ -556,32 +556,68 @@ class CEBlock(object):
                         maxsat_ecis[bc_id]=maxsat_ecis[bc_id]+eci
                         _in_b_clusters = True
                         break
-            if not _in_b_clusters:
-                if len(bclus_ew)==2:
-                    maxsat_bclusters.append(bclus_ew)
-                    maxsat_ecis.append(eci*2)
-                elif len(bclus_ew)==1:
-                    maxsat_bclusters.append(bclus_ew)
-                    maxsat_ecis.append(eci)
+                if not _in_b_clusters:
+                    if len(bclus_ew)==2:
+                        maxsat_bclusters.append(bclus_ew)
+                        maxsat_ecis.append(eci*2)
+                    elif len(bclus_ew)==1:
+                        maxsat_bclusters.append(bclus_ew)
+                        maxsat_ecis.append(eci)
         return maxsat_bclusters,maxsat_ecis
 
-    def _maxsat_model_forblk(self,soft_bcs,soft_ecis):
-        m = Model()
-        x = m.addVars(self.num_of_vars,vtype=GRB.BINARY)
-
-        #Hard constraints to enforce sum(specie_occu)=1
+    def _Write_MAXSAT_input_forblk(self,soft_bcs,soft_ecis):
+        print('Preparing MAXSAT input file for LB convergence')
+        soft_cls = []
+        hard_cls = []
+        
         for site_id in range(self.max_site+1):
             dz = (site_id//self.Nsite)%(self.blkrange+1)
             dy = (site_id//self.Nsite)//(self.blkrange+1)%(self.blkrange+1)
             dx = (site_id//self.Nsite)//(self.blkrange+1)//(self.blkrange+1)
             site_in_sc = site_id % self.Nsite
             bit_inds = self.bit_inds_sc
-            hard = LinExpr()
-            for bit_orimage in bit_inds[site_in_sc]:
-                bit = bit_orimage + (dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
-                hard += x[bit-1]
-            m.addConstr(hard<=1)
-        
-        #Set objective
-        obj = GenExpr()
-        for bc,eci in zip(soft_bcs,soft_ecis):
+            for id_1,id_2 in combinations(bit_inds[site_in_sc],2):
+                id1_img = id_1 + (dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
+                id2_img = id_2 +(dx*(self.blkrange+1)**2+dy*(self.blkrange+1)+dz)*self.num_bits_sc
+                # Maximum bit appeared in hard clauses.
+                hard_cls.append([self.hard_marker]+[int(-1*id1_img),int(-1*id2_img)])
+            #Hard clauses to enforce sum(specie_occu)=1
+       
+        all_eci_sum = 0
+        for b_cluster,eci in zip(soft_bcs, soft_ecis):
+            if int(eci*self.eci_mul)!=0: 
+        #2016 Solver requires that all weights >=1 positive int!! when abs(eci)<1/eci_mul, cluster will be ignored!
+                if eci>0:
+                    clause = [int(eci*self.eci_mul)]
+                    all_eci_sum+=int(eci*self.eci_mul)
+            #MAXSAT 2016 series only takes in integer weights
+                    for b_id in b_cluster:
+                        clause.append(int(-1*b_id))
+        #Don't worry about the last specie for a site. It is take as a referecne specie, 
+        #thus not counted into nbits and combos at all!!!
+                    soft_cls.append(clause)
+                else:
+                    clauses_to_add = []
+                    for i in range(len(b_cluster)):
+                        clause = [int(-1*eci*self.eci_mul),int(b_cluster[i])]
+                        all_eci_sum+=int(-1*eci*self.eci_mul)
+                        for j in range(i+1,len(b_cluster)):
+                            clause.append(int(-1*b_cluster[j]))
+                        clauses_to_add.append(clause)
+                    soft_cls.extend(clauses_to_add)
+    
+        print('Soft clusters converted!')
+        if all_eci_sum > self.hard_marker:
+            print('Hard clauses marker might be too small. You may consider using a bigger value.')
+    
+        all_cls = hard_cls+soft_cls
+        #print('all_cls',all_cls)
+            
+        num_of_cls = len(all_cls)
+        maxsat_input = 'c\nc Weighted paritial maxsat\nc\np wcnf %d %d %d\n'%(self.num_of_vars,num_of_cls,self.hard_marker)
+        for clause in all_cls:
+            maxsat_input+=(' '.join([str(lit) for lit in clause])+' 0\n')
+        f_maxsat = open('maxsat.wcnf','w')
+        f_maxsat.write(maxsat_input)
+        f_maxsat.close()
+        print('maxsat.wcnf written.')

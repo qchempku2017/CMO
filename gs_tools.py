@@ -13,7 +13,7 @@ from operator import mul
 from functools import reduce
 import random
 
-from itertools import combinations,permutations
+from itertools import combinations,permutations,chain
 from pymatgen.analysis.ewald import EwaldSummation
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer, SymmOp
 from pymatgen.util.coord import coord_list_mapping_pbc
@@ -23,6 +23,8 @@ from pymatgen.analysis.structure_matcher import StructureMatcher
 from utils import *
 from ewald_tools import *
 from block_tools import CEBlock
+
+from gurobi import *
 
 __author__ = "Fengyu Xie"
 __version__ = "2019.0.0"
@@ -49,6 +51,8 @@ Notes:
     mathematically proven.
 
     ClusterExpansion class already have all the enerigies normalized before fitting.
+
+    Using only gurobi as an optimizer now.
 """
 
 #####
@@ -65,9 +69,7 @@ class GScanonical(MSONable):
     """
 
     def __init__(self, ce, eci, composition, transmat=[[1,0,0],[0,1,0],[0,0,1]],maxsupercell=200, \
-                 max_block_range = 1, hard_marker=1000000000000000, \
-                 eci_mul=1000000,solver='CCEHC-incomplete',\
-                 num_split=10,n_iniframe=20):
+                 max_block_range = 1, num_split=10, n_iniframe=20):
         """
         Args:
             ce: a cluster expansion object that you wish to solve the GS of.
@@ -80,10 +82,6 @@ class GScanonical(MSONable):
             max_block_range: maximum block extension range. This determines how far an image you want to split your
                              clusters to.(Unit: supercell dimensions)
             selec: number of enumerated supercell matrices to select.
-            solver: the MAXSAT solver used to solve the upper bound problem. Default: CCEHC-incomplete.
-                    (We use incomplete solvers to make the time consumption tractable for MAXSAT)
-            hard_marker: the marking number of hard clauses in MAXSAT. Should be sufficiently large (>sum(ECI)).
-            eci_mul: since many MAXSAT only take integer weights, we multiply and floor ECI's with this to make integers.
             num_split: number of Symmetrized clusters to split. When num_split = 10, only sc's with top 10 ECI absolute values will be splitted.
             n_iniframe: number of sampled structures to intialize LP in lowerbound problem.
             composition: a list of dictionaries that represents species occupation ratio on each site. For example:
@@ -117,8 +115,8 @@ class GScanonical(MSONable):
         self._comp_step = GCD_List(sp_list)
         # Find the enumeration step for composition, and this will be the minimum enumerated supercell size.
         self.composition=[{sp:site_occu[sp]//self._comp_step for sp in site_occu} for site_occu in composition]
+        self.formula_size = int(round(sum(self.composition[0].keys())))        
 
-        self.solver = solver
         self.e_lower = None
         self.str_upper = None
         self.e_upper = None
@@ -134,8 +132,6 @@ class GScanonical(MSONable):
         if self.transmat != [[1,0,0],[0,1,0],[0,0,1]]:
             print("Using transformation matrix:",self.transmat,"in enumeration.")
 
-        self.hard_marker = hard_marker
-        self.eci_mul = eci_mul
         self.num_split = num_split
         self.n_iniframe = n_iniframe
         prim = self.ce.structure
@@ -170,7 +166,8 @@ class GScanonical(MSONable):
             for i in range(self.enum_d, self.enum_d+4):
                 for j in range(self.enum_d,self.enum_d+4):
                     for k in range(self.enum_d,self.enum_d+4):
-                        if i*j*k<=self.maxsupercell:    
+                        if i*j*k<=self.maxsupercell and (i*j*k)%self.formula_size==0: 
+                            #supercell shouldn't be too large, and should be able to host a formula. 
                             ijk_buff = sorted([(i,self.a),(j,self.b),(k,self.c)],key=lambda x:x[1])
                             ijk = [v[0] for v in ijk_buff]
                             _enumlist.append([[ijk[0],0,0],[0,ijk[1],0],[0,0,ijk[2]]])
@@ -305,16 +302,7 @@ class GScanonical(MSONable):
 #### 
     def _iterate_supercells(self):
         for mat_id,mat in enumerate(self.enumlist):
-            #Here we will convert problems into MAXSAT and LP standard inputs, solve and analyze the outputs
             print("Solving on supercell matrix:",mat)
-            sc_size  = int(round(np.abs(np.linalg.det(self.enumlist[mat_id]))))
-            compstat = sum(self.composition[0].values())
-
-            if sc_size%compstat !=0:
-                print("Supercell {} can not have composition {}. Skipping.".format(self.enumlist[mat_id],self.composition))
-                continue
-
-            #print("Warning: Solving UB only.")
             #try:
             cur_e_upper,cur_str_upper=self._solve_upper(mat_id)
             print("Current GS upper-bound: %f"%cur_e_upper)
@@ -342,63 +330,47 @@ class GScanonical(MSONable):
            #     self.str_upper = None
            #     print("GS UB or LB for {} not found! Skipping".format(mat))           
         return False
-
-    def _electrostatic_correction(self,mat_id):
-        """
-            This part generates bit_clusters and ecis to further convert into MAXSAT clauses from a 
-        ClusterSupercell object.
-            For each species on each site of the cluster_supercell, a unique,1-based b_id is assigned. For ex.
-            0.0 0.0 0.0 Au(1) Cu(2) Vac(3)
-            0.0 0.5 0.0 Zn(4) Mn(5)
-            ...
-            bit_clusters are represented as tupled combinations of b_id's,such as (1) and (3,2,5). 
-            Symmetry anlyzer will generate all symetrically equivalent b_clusters from symmetrized_bit_clusters(bit_combos) in pyabinitio,
-        and assign an eci to them each as ECI_sc/multiplicity.
-            If the self.use_ewald, will add the corresponding ewald matrix element to bit_clusters' ecis. If self.use_inv_r, a list of
-        such matrix elements will be added. Finally, will remove the ewald related term(s).
-            At the beginning of initialization, the self.enumlist and ewald corrections would already have been done. You gotta save a lot of time.
-            mat_id: current supercell matrix id.
-        """
-        
-        return self.bclus_corrected[mat_id],self.ecis_corrected[mat_id],self.bit_inds[mat_id]
             
     def _solve_upper(self,mat_id):
         """
-            Warning: hard_marker is the weight assigened to hard clauses. Should be chosen as a big enough number!
+            Now using gurobi.
         """
-        #### Input Preparation ####
-        b_clusters_new,ecis_new,site_specie_ids=self._electrostatic_correction(mat_id)
-        #print(site_specie_ids)
+        b_clusters_new = self.bclus_corrected[mat_id]
+        ecis_new = self.ecis_corrected[mat_id]
+       
+        num_of_vars = max(chain(*bit_ind))
+        #switched to gurobi
+        m = Model()
+        x = m.addVars(num_of_vars,vtype=GRB.BINARY)
 
-        sc_size = int(round(np.abs(np.linalg.det(self.enumlist[mat_id]))))
-        specie_names = [[str(sp) for sp in sorted(sublat.species_and_occu.keys())] for sublat in self.ce.structure]
-        #dict.keys() gives a special generator called 'Keyview', not list, and thus can not be indexed
-        #convert into list first!
+        # Add hard clauses(sum(x_site)<=1)
+        self._add_hard_constrs(m,x,mat_id)
+        
+        # Add canonical constraints
+        self._add_ca_constrs(m,x,mat_id)
 
-        # When using incomplete solver, call 3 times at most to increase rate of success.
-        it = 1
-        while it<10:
-            Write_MAXSAT_input(b_clusters_new,ecis_new,site_specie_ids,sc_size=sc_size,\
-                               conserve_comp=self.composition,sp_names=specie_names,\
-                               hard_marker=self.hard_marker, eci_mul=self.eci_mul)
-            #### Calling MAXSAT ####
-            Call_MAXSAT(solver=self.solver)
+        # Add objective
+        obj = GenExpr()
+        for bclus,eci in zip(b_clusters_new,ecis_new):
+            clause = 1
+            for bit in bclus:
+                clause = clause*x[bit-1]
+            obj += eci*clause
+        m.setObjective(obj,GRB.MINIMIZE)
+        m.setParam(GRB.Param.TimeLimit, 1800)
 
-            #### Output Processing ####
-            maxsat_res = Read_MAXSAT()
-            if len(maxsat_res)==0:
-                print("ERROR:Solution not found for supercell {}! Attempt No.{}.".format(self.enumlist[mat_id],it))
-                it+=1
-            else:
-                print("Success:MAXSAT solution found!")
-                break
-
+        #Update to register all the new variables and constraints.
+        m.update()
+        m.optimize()
+        
+        maxsat_res = [(x_id+1) for x_id in x if x[x_id].x else -(x_id+1)]
+        maxsat_res = sorted(maxsat_res,key=lambda x:abs(x))
         cs = self.ce.supercell_from_matrix(self.enumlist[mat_id])
         cs_bits = get_bits(cs.supercell)
 
         upper_sites = []
-        #print(site_specie_ids)
-        for s,site in enumerate(site_specie_ids):
+        #print(bit_ind)
+        for s,site in enumerate(bit_ind):
             should_be_ref = True
             st = cs.supercell[s]
             for v_id,var_id in enumerate(site):
@@ -439,13 +411,38 @@ class GScanonical(MSONable):
            so don't normalize again!)
         """
 
-        clus_sup = self.ce.supercell_from_matrix(self.enumlist[mat_id])
-        blk = CEBlock(clus_sup, self.eci, self.composition, block_range=self.max_block_range,hard_marker=self.hard_marker,\
-                      eci_mul=self.eci_mul,num_of_sclus_tosplit=self.num_split,n_iniframe=self.n_iniframe,\
-                      solver=self.solver)           
+        blk = CEBlock(self.ce,self.enumlist[mat_id], self.eci, self.composition, bclus_ewald = self.bclus_ewald[mat_id],\
+                      eci_ewald = self.ecis_ewald[mat_id], block_range=self.max_block_range, n_iniframe=self.n_iniframe)         
+
         #### Calling Gurobi ####
         lower_e = blk.solve()
         return lower_e
+
+    def _add_hard_constrs(self,m,x,mat_id):
+        bit_ind = self.enumlist[mat_id]
+        for site in bit_ind:
+            hard = LinExpr()
+            for bit in site:
+                hard+=x[bit-1]
+            m.addConstr(hard <= 1)
+
+    def _add_ca_constrs(self,m,x,mat_id):
+        bit_ind = self.enumlist[mat_id]
+        sc_size = int(round(np.abs(np.linalg.det(self.enumlist[mat_id]))))
+        scale = sc_size//self.formula_size
+
+        scaled_composition = [{sp:sublat[sp]*comp_scale for sp in sublat} for sublat in self.composition]
+        specie_names = [[str(sp) for sp in sorted(sublat.species_and_occu.keys())] for sublat in self.ce.structure]
+        sublats = [bit_ind[i*sc_size:(i+1)*sc_size] for i in range(0,N_sites//sc_size)]
+        bits_sp_sublat = [[[sublat[s_id][sp_id] for s_id in range(len(sublat))] \
+                            for sp_id in range(len(sublat[0]))] for sublat in sublats]
+        for sublat_id,sublat in enumerate(bits_sp_sublat):
+            for sp_id,sp_bits in enumerate(sublat):
+                sp_name = specie_names[sublat_id][sp_id]
+                ca_expression = LinExpr()
+                for bit in sp_bits:
+                    ca_expression+=x[bit-1]
+                m.addConstr(ca_expression = scaled_composition[sublat_id][sp_name])
 
 ####
 # I/O interface
@@ -459,12 +456,7 @@ class GScanonical(MSONable):
             gs_socket.maxsupercell=d['maxsupercell']
         if 'max_block_range' in d:
             gs_socket.max_block_range=d['max_block_range']
-        if 'solver' in d:
-            gs_socket.solver = d['solver']
-        if 'hard_marker' in d:
-            gs_socket.hard_marker = d['hard_marker']
-        if 'eci_mul' in d:
-            gs_socket.eci_mul = d['eci_mul']
+
         if 'num_split' in d:
             gs_socket.num_split = d['num_split']
         if 'n_iniframe' in d:
@@ -503,9 +495,6 @@ class GScanonical(MSONable):
                 'composition':self.composition,\
                 'maxsupercell':self.maxsupercell,\
                 'max_block_range':self.max_block_range,\
-                'solver':self.solver,\
-                'hard_marker':self.hard_marker,\
-                'eci_mul':self.eci_mul,\
                 'num_split':self.num_split,\
                 'n_iniframe':self.n_iniframe,\
                 'e_lower':self.e_lower,\
