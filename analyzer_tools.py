@@ -78,7 +78,7 @@ def _assign_ox_states(struct,magmoms):
 class CalcAnalyzer(object):
 
     def __init__(self, vaspdir='vasp_run', prim_file='prim.cif',calc_data_file='calcdata.mson',ce_file='ce.mson',ce_radius=None,\
-                 max_de=100,max_ew=3, sm_type='pmg_sm', ltol=0.2, stol=0.15, angle_tol=5, vor_tol=1e-3, solver='cvxopt_l1',\
+                 max_de=100,max_ew=3, sm_type='pmg_sm', ltol=0.2, stol=0.15, angle_tol=5, solver='cvxopt_l1',\
                  basis='01',weight='unweighted'):
         self.calcdata = {}
         self.vaspdir = vaspdir
@@ -90,11 +90,25 @@ class CalcAnalyzer(object):
         self.ltol = ltol
         self.stol = stol
         self.angle_tol = angle_tol
-        self.vor_tol = vor_tol
         self.basis = basis
         
-
         self.prim = CifParser(prim_file).get_structures()[0]
+
+        #Check if charge assignments are required.
+        species_all = []
+        for site in self.prim:
+            siteSpecies = site.species_string.split(',')
+            #print('siteSpecies',siteSpecies)
+            if len(siteSpecies)>1 or (':' in siteSpecies[0]):
+                species_all.extend([[s[0].strip() for s in specieoccu.split(':')] for specieoccu in siteSpecies])
+            else:
+                species_all.append(siteSpecies[0].strip())
+        chgs_all = [GetIonChg(specie) for specie in species_all]
+        self.is_charged_ce = False
+        for chg in chgs_all:
+            if chg:
+                self.is_charged_ce = True
+                break
 
         if os.path.isfile(calc_data_file):
             with open(calc_data_file) as Fin:
@@ -137,7 +151,7 @@ class CalcAnalyzer(object):
 
             self.ce = ClusterExpansion.from_radii(self.prim, ce_radius,sm_type = self.sm_type,\
                                      ltol=self.ltol, stol=self.stol, angle_tol=self.angle_tol,\
-                                     vor_tol=self.vor_tol, supercell_size='volume',use_ewald=True,\
+                                     supercell_size='volume',use_ewald=True,\
                                      use_inv_r=False,eta=None, basis=self.basis);
     
         #self.max_deformation = max_deformation
@@ -213,29 +227,41 @@ class CalcAnalyzer(object):
         # Every key in self.calcdata['compositions'] is a composition, and each composition contains a list of dict entrees.
         # relaxed_structure, input_structure, magmoms, total_energy. 
     
-        _is_vasp_calc = lambda fs: 'POSCAR' in fs and 'CONTCAR' in fs and 'OSZICAR' in fs and 'OUTCAR' in fs
+        _is_vasp_calc = lambda fs: 'POSCAR' in fs and 'INCAR' in fs and 'KPOINTS' in fs and 'POTCAR' in fs
         # Load VASP runs from given directories
     
-        _did_ax_decomp = False
         n_matched = 0
         n_inputs = 0
         for root,dirs,files in os.walk(self.vaspdir):
+            #A calculation directories has only 3 status: 
+            #accepted: calculation was successful, and already entered into calcdata.mson
+            #falied: calculated but not successful, either aborted or can't be read into calcdata.mson
+            #For these above two, we don't want to submit a calculation or post-process again.
+            #not marked: calculation run not started or not finished yet. Since analyzer is always called
+            #after runner, we don't need to worry that analyzer will find unmarked folders.
+
             if _is_vasp_calc(files) and (not 'accepted' in files) and (not 'failed' in files):
                 print("Loading VASP run in {}".format(root));
                 parent_root = os.path.join(*root.split(os.sep)[0:-1])
                 parent_parent_root = os.path.join(*root.split(os.sep)[0:-2])
-                #print('parent {}'.format(parent_root))
-                #print('parent parent {}'.format(parent_parent_root))
                 with open(os.path.join(parent_parent_root,'composition_by_site')) as compfile:
                     composition = json.load(compfile)
                     compstring = json.dumps(composition)
     
                 if compstring not in self.calcdata['compositions']:
                     self.calcdata['compositions'][compstring]=[]
-    
-                relaxed_struct = Poscar.from_file(os.path.join(root,'CONTCAR')).structure
+                 
+                #Check existence of output structure
+                try:
+                    relaxed_struct = Poscar.from_file(os.path.join(root,'CONTCAR')).structure
+                except:
+                    print('Entry {} CONTCAR can not be read. Skipping.'.format(root))
+                    open(os.path.join(root,'failed'),'a').close()
+                    continue
+
                 input_struct = Poscar.from_file(os.path.join(parent_root,'POSCAR')).structure
-    
+                
+                #Check uniqueness
                 strict_sm = StructureMatcher(stol=0.1, ltol=0.1, angle_tol=1, comparator=ElementComparator())
                 _is_unique = True
                 for entry in self.calcdata['compositions'][compstring]:
@@ -244,8 +270,7 @@ class CalcAnalyzer(object):
                         _is_unique = False
                         break
                 if not _is_unique:
-                    print("Entry {} already in calculation data file. Passing.".format(root))
-                    open(os.path.join(root,'failed'),'a').close()
+                    open(os.path.join(root,'accepted'),'a').close()
                     continue
                 n_inputs += 1
     
@@ -260,24 +285,28 @@ class CalcAnalyzer(object):
                 relaxed_deformed = o2i_deformation.apply_to_structure(relaxed_struct)
                 #print(relaxed_deformed,input_struct)
     
-                # Assign oxidation states to Mn based on magnetic moments in OUTCAR
-                Out=Outcar(os.path.join(root,'OUTCAR')); Mag=[];
-                for SiteInd,Site in enumerate(relaxed_struct.sites):
-                    Mag.append(np.abs(Out.magnetization[SiteInd]['tot']));
-                relaxed_deformed = _assign_ox_states(relaxed_deformed,Mag);
-                relaxed_struct = _assign_ox_states(relaxed_struct,Mag)
-                #input_struct = _assign_ox_states(input_struct,Mag)
-                #print("relaxed_struct {}".format(relaxed_struct))
-                # Throw out structures where oxidation states don't make sense
-                #print('Input Struct:',input_struct)
-                #print('Relaxed deformed:',relaxed_deformed)
-    
-                if np.abs(relaxed_struct.charge)>0.01:
-                    print(relaxed_struct)
-                    print("Instance {} not charge balanced .. skipping".format(root))
+                # Assign oxidation states to Mn based on magnetic moments in OUTCAR, first check existence of OUTCAR
+                try:
+                    Out=Outcar(os.path.join(root,'OUTCAR'))
+                except:
+                    print('Entry {} OUTCAR can not be read. Skipping.'.format(root))
                     open(os.path.join(root,'failed'),'a').close()
-                    #Add a status marker to directory.
                     continue
+                
+                if self.is_charged_ce:
+                    Mag=[]
+                    for SiteInd,Site in enumerate(relaxed_struct.sites):
+                        Mag.append(np.abs(Out.magnetization[SiteInd]['tot']));
+                    relaxed_deformed = _assign_ox_states(relaxed_deformed,Mag);
+                    relaxed_struct = _assign_ox_states(relaxed_struct,Mag)
+                    # Throw out structures where oxidation states don't make charge balanced.
+       
+                    if np.abs(relaxed_struct.charge)>0.01:
+                        print(relaxed_struct)
+                        print("Entry {} not charge balanced. skipping".format(root))
+                        open(os.path.join(root,'failed'),'a').close()
+                        #Add a status marker to directory.
+                        continue
     
                 # Get final energy from OSZICAR or Vasprun. Vasprun is better but OSZICAR is much
                 # faster and works fine is you separately check for convergence, sanity of
@@ -285,7 +314,7 @@ class CalcAnalyzer(object):
                 with open(os.path.join(root, 'OUTCAR')) as outfile:
                     outcar_string = outfile.read()
                 if 'reached required accuracy' not in outcar_string:
-                    print('Instance {} did not converge to required accuracy. Skipping.'.format(root))
+                    print('Entry {} did not converge to required accuracy. Skipping.'.format(root))
                     open(os.path.join(root,'failed'),'a').close()
                     continue
                 TotE=Oszicar(os.path.join(root, 'OSZICAR')).final_energy;
@@ -294,10 +323,9 @@ class CalcAnalyzer(object):
                 # Checking whether structure can be mapped to corr function.
                 # This is out deformation tolerance.     
                 try:
-                #print(self.ce.as_dict())
                     self.ce.corr_from_structure(relaxed_deformed)
                 except:
-                    print("Instance {} too far from lattice. Skipping.".format(root))
+                    print("Entry {} too far from original lattice. Skipping.".format(root))
                     open(os.path.join(root,'failed'),'a').close()
                     continue
     
@@ -309,15 +337,10 @@ class CalcAnalyzer(object):
                 new_entry['magmoms']=Mag
     
                 if os.path.isfile(os.path.join(parent_parent_root,'axis')):
-                    _did_ax_decomp = True
                     with open(os.path.join(parent_parent_root,'axis')) as axisfile:
                         axis = json.load(axisfile)
                     if 'axis' not in new_entry:
                         new_entry['axis']=axis
-                else:
-                    if _did_ax_decomp:
-                        print('Selected axis decomposition, but instance {} is not axis decomposed!'.format(root))
-                        new_entry['axis'] = None
     
                 self.calcdata['compositions'][compstring].append(new_entry)
                 open(os.path.join(root,'accepted'),'a').close()
@@ -380,9 +403,6 @@ class CalcAnalyzer(object):
     
         if 'angle_tol' in settings: angle_tol = settings['angle_tol'];
         else: angle_tol = 5;
-    
-        if 'vor_tol' in settings: vor_tol = settings['vor_tol'];
-        else: vor_tol = 1e-3;
 
         if 'solver' in settings: solver = settings['solver'];
         else: solver = 'cvxopt_l1';
@@ -395,7 +415,7 @@ class CalcAnalyzer(object):
 
         return cls(vaspdir=vaspdir,prim_file=prim_file,calc_data_file=calc_data_file,ce_file = ce_file, ce_radius=ce_radius,\
                    max_de = max_de, max_ew = max_ew, sm_type = sm_type, ltol = ltol, stol = stol, angle_tol = angle_tol,\
-                   vor_tol = vor_tol, solver = solver, basis = basis, weight = weight)
+                   solver = solver, basis = basis, weight = weight)
 
     def as_dict(self):
         settings = {}
@@ -410,7 +430,6 @@ class CalcAnalyzer(object):
         settings['ltol'] = self.ltol
         settings['stol'] = self.stol
         settings['angle_tol'] = self.angle_tol
-        settings['vor_tol'] = self.vor_tol
         settings['solver'] = self.solver
         settings['basis'] = self.basis
         settings['weight'] = self.weight

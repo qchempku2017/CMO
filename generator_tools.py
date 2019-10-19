@@ -409,7 +409,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
         if len(siteSpecies)>1 or (':' in siteSpecies[0]):
             siteOccu = dict([[s.strip() for s in specieoccu.split(':')] for specieoccu in siteSpecies])
         else:
-            siteOccu = {siteSpecies[0]:1.00}
+            siteOccu = {siteSpecies[0].strip():1.00}
         #print(siteOccu)
         siteOccuMod = {}
         for specie in siteOccu:

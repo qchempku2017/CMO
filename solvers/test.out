@@ -1,8 +1,8 @@
 c
-c Open-WBO:	 a Modular MaxSAT Solver -- based on Riss (core version)
-c Version:	 2017 -- Release: 2.0
+c Open-WBO:	 a Modular MaxSAT Solver -- based on Minisat (core version)
+c Version:	 September 2018 -- Release: 2.1
 c Authors:	 Ruben Martins, Vasco Manquinho, Ines Lynce
-c Contributors:	 Miguel Neves, Saurabh Joshi, Mikolas Janota
+c Contributors:	 Miguel Neves, Saurabh Joshi, Norbert Manthey, Mikolas Janota
 c Contact:	 open-wbo@sat.inesc-id.pt -- http://sat.inesc-id.pt/open-wbo/
 c
 c WARNING: for repeatability, setting FPU to use double precision
