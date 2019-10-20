@@ -561,26 +561,37 @@ class StructureGenerator(MSONable):
         return self._sc_ro
     #Share the same set of sc_ro across project.
 
-    def generate_structures(self,n_select):
+    def generate_structures(self):
         """
             Does not check if ce.mson is generated! So please make sure that, before two StructureGenerator calls,
             make an analyzer call!
         """
         _unique_structs = _get_mc_structs(self.sc_ro,self.ce,self.ecis,Prim=self.prim,TLst=[500, 1500, 10000],\
                             compaxis= self.comp_axis)
-        ss = StructureSelector(self.ce)
-        _unique_structs_buff = list(_unique_structs.items())
+        ss = StructureSelector(self.ce) #Using Nystrom selection by default
+
+        _unique_structs_buff = []
+        for comp in _unique_structs:
+            _unique_structs_buff.extend([(comp,struct) for struct in _unique_structs[comp]])
         _pool = [val for key,val in _unique_structs_buff]
 
         if len(self._pool)==0:
+            n_init = min(3*len(_unique_structs),len(_pool))
             print("Initializing CE with {} chosen structures.".format(n_init))
             selected_inds = ss.initialzation(_pool,n_init=n_init)
         else:
+            n_add = len(_unique_structs)
             print("Updating CE with {} chosen structures.".format(n_add))
             selected_inds = ss.select_new(self._pool,_pool,n_probe=n_add)
 
         self._pool = self._pool.extend([_pool[idx] for idx in selected_inds])
-        _unique_structs_selected = {_unique_structs_buff[idx][0]:_unique_structs_buff[idx][1] for idx in selected_inds} 
+        _unique_structs_selected = {}
+        for idx in selected_inds:
+            comp = _unique_structs_buff[idx][0]
+            struct = _unique_structs_buff[idx][1]
+            if comp not in _unique_structs_selected:
+                _unique_structs_selected[comp]=[]
+            _unique_structs_selected[comp].append(struct)
 
         _write_mc_structs(_unique_structs_selected,outdir=self.outdir)
         self._write_vasp_inputs()
@@ -611,7 +622,7 @@ class StructureGenerator(MSONable):
 # I/O interface for saving only, from_dict method not required
 ####
     @classmethod
-    def from_settings(cls,setting_file='generator_settings.mson'):
+    def from_settings(cls,setting_file='generator.mson'):
         if os.path.isfile(setting_file):
             with open(setting_file,'r') as fs:
                 settings = json.load(fs)
@@ -679,7 +690,7 @@ class StructureGenerator(MSONable):
                 '@class':self.__class__.__name__\
                }
     
-    def write_settings(self,setting='generator_settings.mson'):
+    def write_settings(self,setting='generator.mson'):
         print("Writing generator settings to {}".format(setting))
         with open(setting,'w') as setting_file:
             json.dump(self.as_dict(),setting_file)

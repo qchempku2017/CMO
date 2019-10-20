@@ -124,6 +124,8 @@ class CalcAnalyzer(object):
             self.ce = ClusterExpansion.from_dict(ce_dat_old['cluster_expansion'])
             self.max_de = ce_dat_old['max_dielectric']
             self.max_ew = ce_dat_old['max_ewald']
+            #self.ce_radius is not set in this case because it will be passed down in analyzer.mson 
+            self.ce_radius = ce_radius
 
         else:
             if not ce_radius:
@@ -139,20 +141,23 @@ class CalcAnalyzer(object):
                     d_nns.append(min(d_ij))
                 d_nn = max(d_nns)
     
-                ce_radius = {}
+                self.ce_radius = {}
                 # Default cluster radius
-                ce_radius[2]=d_nn*4.0
-                ce_radius[3]=d_nn*2.0
-                ce_radius[4]=d_nn*2.0
+                self.ce_radius[2]=d_nn*4.0
+                self.ce_radius[3]=d_nn*2.0
+                self.ce_radius[4]=d_nn*2.0
+
+            else:
+                self.ce_radius = ce_radius
 
             self.max_de = max_de
             self.max_ew = max_ew
-            self.ce_radius = ce_radius
 
-            self.ce = ClusterExpansion.from_radii(self.prim, ce_radius,sm_type = self.sm_type,\
+            self.ce = ClusterExpansion.from_radii(self.prim, self.ce_radius,sm_type = self.sm_type,\
                                      ltol=self.ltol, stol=self.stol, angle_tol=self.angle_tol,\
                                      supercell_size='volume',use_ewald=True,\
                                      use_inv_r=False,eta=None, basis=self.basis);
+         
     
         #self.max_deformation = max_deformation
         #print("Scanning vasprun for new data points.")
@@ -169,7 +174,7 @@ class CalcAnalyzer(object):
                Recorded in one dictionary.
             2, ce_file: a file to store cluster expansion info, gs info, ecis, etc.
             3, ce_radius: Max cluster radius set up. Only required when no existing ce is present.
-            4, max_deformation: parameters to set up CE.structure_matcher object
+            4, max_deformation: parameters to set up CE.structure_matcher object (deprecated)
         Outputs:
             None. The ce_data file will be updated.
 
@@ -358,10 +363,10 @@ class CalcAnalyzer(object):
             #    print('key {} is of type {}'.format(key,type(val)))
             #json.dump(d,Fout)
             # For any msonable, use dumpfn to save your time!
-        dumpfn(self.ECIG,self.ce_file)    
+        dumpfn(self.ECIG,self.ce_file)
     
     @classmethod
-    def from_settings(cls,setting_file='analyzer_settings.mson'):
+    def from_settings(cls,setting_file='analyzer.mson'):
         if os.path.isfile(setting_file):
             with open(setting_file,'r') as fs:
                 settings = json.load(fs)
@@ -435,7 +440,7 @@ class CalcAnalyzer(object):
         settings['weight'] = self.weight
         return settings
     
-    def write_settings(self,settings_file='analyzer_settings.mson'):
+    def write_settings(self,settings_file='analyzer.mson'):
         print('Writing anlyzer settings to {}'.format(settings_file))
         with open(settings_file,'w') as fout:
             json.dump(self.as_dict(),fout)
