@@ -690,7 +690,7 @@ class StructureGenerator(MSONable):
                 '@class':self.__class__.__name__\
                }
     
-    def write_settings(self,setting='generator.mson'):
-        print("Writing generator settings to {}".format(setting))
-        with open(setting,'w') as setting_file:
-            json.dump(self.as_dict(),setting_file)
+    def write_settings(self,settings_file='generator.mson'):
+        print("Writing generator settings to {}".format(settings_file))
+        with open(settings_file,'w') as fout:
+            json.dump(self.as_dict(),fout)

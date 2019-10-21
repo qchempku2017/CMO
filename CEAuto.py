@@ -19,19 +19,6 @@ from analyzer_tools import *
 from gs_tools import * 
 from utils import *
 
-###################################
-#One example of OXRange we use is given below:
-#ox_ranges = {'Mn': {(0.5, 1.5): 2,
-#            (1.5, 2.5): 3,
-#            (2.5, 3.4): 4,
-#            (3.4, 4.05): 3,
-#            (4.05, 5.0): 2}};
-#The way it works is really emperical but we did not find a generalized way to
-#correlate charge states with magnetism. Maybe we can automate a self consistent routine
-#to check the check balance during VASP caculation loading and pick a best one. Or just 
-#Pre-calculate it and make it into a data file like json or yaml (works like the DFT+U paprameters);
-##################################
-
 class CEAutojob(object):
     """
         An abstract Cluster Expansion automated step. Can be constructed by specifiying job type and reading setting.mson file. 
@@ -50,9 +37,11 @@ class CEAutojob(object):
     def __init__(self,\
                  n_sc_select=10,transmat=None,compaxis=None,enforce_occu=None,sample_step=1,vasp_settings='vasp_settings.mson',max_sc_size=64,\
                  ce_radius=None,max_de=100,max_ew=3,sm_type='pmg_sm',ltol=0.2,stol=0.15,angle_tol=5,fit_solver='cvxopt_l1',basis='01',weight='unweighted'\
+                 gen_file = 'generator.mson', ana_file = 'analyzer.mson', data_file = 'calcdata.mson', ce_file = 'ce.mson', run_dir = 'vasp_run',\
+                 gs_dir = 'gs_run', prim_file = 'prim.cif', option_file = 'options.mson', rmse_file = 'rmse_cvs.mson'\
                  ):
         """
-            All parameters are optional, but becareful with enforce_occu!
+            All parameters are optional, but be careful with enforce_occu, and I highly recommend you to set this up!
 
             1st row: generator options. Settings for vasp should be written in another file: vasp_settings.mson
               n_sc_select: How many skewed and unskewed supercells to select from enumeration.
@@ -96,6 +85,16 @@ class CEAutojob(object):
         self.basis = basis
         self.weight = weight
 
+        self.gen_file = gen_file
+        self.ana_file = ana_file
+        self.ce_file = ce_file
+        self.data_file = data_file
+        self.run_dir = run_dir
+        self.gs_dir = gs_dir
+        self.prim_file = prim_file
+        self.option_file = option_file
+        self.rmse_file = rmse_file
+
     @property
     def status(self):
         """
@@ -108,12 +107,12 @@ class CEAutojob(object):
         s = 0
         
         #Initial set up finished but generator has not been run yet, then run generator
-        if os.path.isfile('prim.cif') and os.path.isfile('options.mson'):
+        if os.path.isfile(self.prim_file) and os.path.isfile(self.option_file):
             s = 1 
         else:
             return s
         #Generator already ran before, but DFT has not finished
-        if os.path.isfile('generator.mson') and os.path.isdir('vasp_run'):   
+        if os.path.isfile(self.gen_file) and os.path.isdir(self.run_dir):   
             s = 2
         else:
             return s
@@ -122,8 +121,8 @@ class CEAutojob(object):
 
         _is_vasp_calc = lambda fs: 'POSCAR' in fs and 'INCAR' in fs and 'KPOINTS' in fs and 'POTCAR' in fs
         _is_finished = lambda fs: 'CONTCAR' in fs and 'OUTCAR' in fs
-        if os.path.isdir('vasp_run'):
-            for root,dirs,files in os.walk('vasp_run'):
+        if os.path.isdir(self.run_dir):
+            for root,dirs,files in os.walk(self.run_dir):
                 if _is_vasp_calc(files) and (not 'accepted' in files) and (not 'failed' in files):
                     if not _is_finished(files): 
                         all_calculated=False
@@ -137,8 +136,8 @@ class CEAutojob(object):
             return s
        
         #Everything is there, and CE has converged.Do nothing
-        if os.path.isfile('ce.mson') and os.path.isfile('calcdata.mson') and os.path.isfile('rmse_cvs.mson'):
-            with open('rmse_cvs.mson','r') as cvs_record:
+        if os.path.isfile(self.ce_file) and os.path.isfile(self.data_file) and os.path.isfile(self.rmse_file):
+            with open(self.rmse_file,'r') as cvs_record:
                 rmse_cvs = json.load(cvs_record)
             cvs = rmse_cvs['cvs']
             if len(cvs)<3: 
@@ -151,26 +150,60 @@ class CEAutojob(object):
         return s
 
     def _analyzer_call(self):
-        ana = CalcAnalyzer(ce_radius = self.ce_radius)
+        if os.path.isfile(self.ana_file):
+            ana = CalcAnalyzer.from_settings(setting_file=self.ana_file)
+        else:
+            ana = CalcAnalyzer(vaspdir = self.run_dir, \
+                               prim_file = self.prim_file, \
+                               calc_data_file = self.data_file, \
+                               ce_file = self.ce_file,\
+                               ce_radius = self.ce_radius
+                               max_de = self.max_de,\
+                               max_ew = self.max_ew,\
+                               sm_type = self.sm_type,\
+                               ltol = self.ltol,\
+                               stol = self.stol,\
+                               angle_tol = self.angle_tol,\
+                               solver = self.fit_solver,\
+                               basis = self.basis,\
+                               weight = self.weight)
+                             
         ana.fit_ce()
         ana.write_files()
+        if not os.path.isfile(self.ana_file):
+            ana.write_settings(settings_file=self.ana_file)
         #Appending new cv score and RMSE
-        if os.path.isfile('rmse_cvs.mson'):
-            with open('rmse_cvs.mson','r') as rc_in:
+        if os.path.isfile(self.rmse_file):
+            with open(self.rmse_file,'r') as rc_in:
                 rmse_cvs=json.load(rc_in) 
         else:
             rmse_cvs = {'rmse':[],'cvs':[]}
 
         rmse_cvs['rmse'].append(ana.ECIG.rmse)
         rmse_cvs['cvs'].append(ana.ECIG.cv)
-        with open('rmse_cvs.mson','w') as rc_out:
+        with open(self.rmse_file,'w') as rc_out:
             json.dump(rmse_cvs,rc_out)  
 
     def _generator_call(self):
-        if os.path.isfile("generator.mson"):
-        #### Start from here later
+        if os.path.isfile(self.gen_file):
+            gen = StructureGenerator.from_settings(setting_file=self.gen_file)
+        else:
+            gen = StructureGenerator(prim_file = self.prim_file,\
+                                     outdir = self.run_dir,\
+                                     enforced_occu = self.enforced_occu,\
+                                     sample_step=self.sample_step,\
+                                     max_sc_size = self.max_sc_size,\
+                                     sc_selec_num=self.n_sc_select,\
+                                     comp_axis=self.compaxis,\
+                                     transmat = self.transmat,\
+                                     ce_file = self.ce_file,\
+                                     vasp_settings = self.vasp_settings)
 
-    def _submission_runs(self):
+        gen.generate_structures()
+        if not os.path.isfile(self.gen_file):
+            gen.write_settings(settings_file=self.gen_file)
+
+    def _run_calcs(self):
         """
         This submits all uncalculated entree to the computation cluster and do DFT.
         """
@@ -185,7 +218,7 @@ class CEAutojob(object):
         if refit_only:
             print("Doing refit only.")
             if init_stat >=3: # Must be at least 3 for an analyzer run to be possible.
-                os.rename('rmse_cvs.mson','rmse_cvs_old.mson')
+                os.rename(self.rmse_file,self.rmse_file+'.old')
                 self._analyzer_call()
                 print("Cluster expansion refitted!")
                 return
@@ -198,12 +231,30 @@ class CEAutojob(object):
             print("Warning: Already have a converged cluster expansion. If you want to refit with other parameters, \
                    rewrite the analyzer options in options.mson, re-initialize this object, and call fit_ce function\
                    under refit_only=True. Otherwise I will do nothing.")
-        elif init_stat == 
+        else:
+            if init_stat <= 1:
+                self._generator_call()
+            if init_stat <= 2:
+                self._run_calcs()
+            if init_stat <= 3:
+                self._analyzer_call()
+
+        while self.status != 4:
+        #### Iterate until converged.
+            self._generator_call()
+            self._run_calcs()
+            self._analyzer_call()
         
     def run_gs(self):
         """
-        This calls the gs solver.
+        This calls the canonical gs solver and gives ground states on a hull.
         """
+        gss_on_hull = solvegs_for_hull(ce_file=self.ce_file,\
+                                       calc_data_file=self.data_file,\
+                                       outdir = self.gs_dir)
+
+        with open(self.gs_file,'w') as gs_out:
+            json.dump(gss_on_hull,gs_out)
 
 if __name__ == "__main__":
 
