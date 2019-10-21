@@ -1,0 +1,8 @@
+_fw_name: CommonAdapter
+_fw_q_type: SGE
+_fw_template_file: /home/fengyu_xie/work/CMO/fw_adapters/ginar_template.txt
+rocket_launch: rlaunch -w /home/fengyu_xie/work/fw_adapters/ginar_fworker.yaml -l /home/fengyu_xie/work/fw_adapters/ginar_launchpad.yaml singleshot
+job_name: null
+logdir: null
+pre_rocket: null
+post_rocket: null

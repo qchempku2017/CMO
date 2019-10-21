@@ -1,12 +1,13 @@
 #!/bin/bash
 #$ -cwd
 #$ -j y
-#$ -N cmo_ce
-#$ -m es
-#$ -V
+#$ -N $${jobname}
 #$ -pe impi 16
 #$ -o ll_out
 #$ -e ll_er
 #$ -S /bin/bash
 
-mpiexec.hydra -n $NSLOTS pvasp.5.4.4.intel >> vasp.out 
+$${pre_rocket}
+cd $${launch_dir}
+$${rocket_launch}
+$${post_rocket}
