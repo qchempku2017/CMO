@@ -1,4 +1,0 @@
-ECHO_TEST: successfully loaded your custom FW_config.yaml!
-LAUNCHPAD_LOC: /home/fengyu_xie/work/CMO/fw_adapters/ginar_launchpad.yaml
-FWORKER_LOC: /home/fengyu_xie/work/CMO/fw_adapters/ginar_fworker.yaml
-QUEUEADAPTER_LOC: /home/fengyu_xie/work/CMO/fw_adapters/ginar_qadapter.yaml

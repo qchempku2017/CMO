@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-./CEAuto.py -g --compaxis='["MgO","CaO"]' --transmat='[[1,1,-1],[1,-1,1],[-1,1,1]]' --samplestep=2 --scs=16 --enforceoccu='[1.0,1.0]'
-
-# compaxis is a list of strings converted into list
-# Better keep scs small as we don't want to have too many variables for maxsat.
