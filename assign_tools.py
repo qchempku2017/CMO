@@ -27,7 +27,7 @@ from charge_data import Domains_dict, Fix_Charges_dict
 
 from pymatgen.core.sites import PeriodicSite
 from pymatgen.core.structure import Structure
-from pymatgen.core import Element
+#from pymatgen.core.periodic_table import Element
 
 from skopt import gp_minimize
 
@@ -62,20 +62,22 @@ def make_specie_string(element,oxi):
     if oxi==0: return element
     if oxi<0:  return element+str(oxi)+'-'
 
+def make_element_string(specie):
+
 def assign_single(s_ori,prop,cutoffs,v_species):
     remade_sites = []
     for site, site_prop in zip(s_ori,prop):
-        site_element = Element(site.specie) #Needs improvement
-        if site_element.string in Fix_Charges_dict:#Needs correction.
-            oxi = Fix_Charges_dict[site_element.string]
+        site_element = make_element_string(site.specie) #Needs improvement
+        if site_element in Fix_Charges_dict:#Needs correction.
+            oxi = Fix_Charges_dict[site_element]
             site_sp = make_specie_string(site_element,oxi)
         else:
             site_v_sps = []
             site_cutoffs = []
             for cutoff,v_sp in zip(cutoffs,v_species):
-                if Element(v_sp)== site_element:
+                if make_element_string(v_sp)== site_element:
                     site_cutoffs.append(cutoff)
-                    site_v_sps.append()
+                    site_v_sps.append(v_sp)
 
 
             if site_prop > cutoffs[-1]:
@@ -169,14 +171,22 @@ class ChargeAssign(object):
             for struct,prop in zip(self._pool,self.site_properties):
                 try:
                     assigned_struct = assign_single(struct,prop,self.cutoffs,self.vspecies)
+                    if assigned_struct.charge !=0:
+                        assigned_struct = None
                 except:
                     assigned_struct = None
-                if assigned_struct is not None:
-                    self._assigned_structures.append(assigned_struct)
+                self._assigned_structures.append(assigned_struct)
         return self._assigned_structures
 
-
-            
-    
-        
-        
+    def extend_assignments(self,another_pool,another_props):
+        #Must be used only for two pools generated in a same system.
+        assigned_pool = [] 
+        for struct,prop in zip(another_pool,another_props):
+            try:
+                assigned = assign_single(struct,prop,self.cutoffs,self.vspecies) 
+                if assigned.charge!=0:
+                    assigned = None      
+            except:
+                assigned = None
+            assigned_pool.append(assigned)
+        return assigned_pool
