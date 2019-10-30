@@ -9,12 +9,12 @@ from pymatgen.util.coord import is_coord_subset, lattice_points_in_supercell, co
             coord_list_mapping_pbc, is_coord_subset_pbc
 from monty.json import MSONable
 from warnings import warn
-from global_tools import *
+from utils import *
 
 import itertools
 import numpy as np
 
-from cluster_expansion.ce_utils import delta_corr_single_flip
+from ce_utils import delta_corr_single_flip
 
 SITE_TOL = 1e-6
 

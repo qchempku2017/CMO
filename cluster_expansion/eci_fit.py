@@ -29,8 +29,8 @@ from itertools import chain
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen import Composition, Structure
 from pymatgen.analysis.phase_diagram import PhaseDiagram, PDEntry
-from cluster_expansion.compressive.bregman import split_bregman #split bregman not needed if using gs_preserve or cvxopt_l1
-from cluster_expansion.ce import ClusterExpansion
+from compressive.bregman import split_bregman #split bregman not needed if using gs_preserve or cvxopt_l1
+from ce import ClusterExpansion
 
 from matplotlib import pylab as plt
 
