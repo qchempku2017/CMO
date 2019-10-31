@@ -30,7 +30,7 @@ from pymatgen.core.structure import Structure
 #from pymatgen.core.periodic_table import Element
 
 from skopt import gp_minimize
-
+import re
 
 """
     Format for a Domains_dict:
@@ -63,6 +63,7 @@ def make_specie_string(element,oxi):
     if oxi<0:  return element+str(oxi)+'-'
 
 def make_element_string(specie):
+    return re.sub(r'\d*(\+|\-)$','',specie)
 
 def assign_single(s_ori,prop,cutoffs,v_species):
     remade_sites = []
