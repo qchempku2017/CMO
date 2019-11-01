@@ -33,18 +33,6 @@ from monty.serialization import dumpfn
 ## just get over it and use dumpfn.
 
 from assign_tool import ChargeAssign
-###################################
-#One example of OXRange we use is given below:
-#ox_ranges = {'Mn': {(0.5, 1.5): 2,
-#            (1.5, 2.5): 3,
-#            (2.5, 3.4): 4,
-#            (3.4, 4.05): 3,
-#            (4.05, 5.0): 2}};
-#The way it works is really emperical but we did not find a generalized way to
-#correlate charge states with magnetism. Maybe we can automate a self consistent routine
-#to check the check balance during VASP caculation loading and pick a best one. Or just 
-#Pre-calculate it and make it into a data file like json or yaml (works like the DFT+U paprameters);
-##################################
 
 #### Private tools ####
 # This one is deprecated

@@ -72,14 +72,13 @@ def assign_single(s_ori,prop,cutoffs,v_species):
         if site_element in Fix_Charges_dict:#Needs correction.
             oxi = Fix_Charges_dict[site_element]
             site_sp = make_specie_string(site_element,oxi)
-        else:
+        elif:
             site_v_sps = []
             site_cutoffs = []
             for cutoff,v_sp in zip(cutoffs,v_species):
                 if make_element_string(v_sp)== site_element:
                     site_cutoffs.append(cutoff)
                     site_v_sps.append(v_sp)
-
 
             if site_prop > cutoffs[-1]:
                 site_sp = None #site_property overflowing!
@@ -150,7 +149,10 @@ class ChargeAssign(object):
     @property
     def cutoffs(self):
         if self._cutoffs is None:
-            self._cutoffs = gp_minimize(self.evaluate,self.domains)
+            if len(self.domains)==0:
+                self._cutoffs = []
+            else:
+                self._cutoffs = gp_minimize(self.evaluate,self.domains)
         return self._cutoffs
 
     def evaluate(self,cutoffs):
