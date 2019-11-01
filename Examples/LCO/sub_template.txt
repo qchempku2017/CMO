@@ -1,0 +1,13 @@
+#!/bin/bash
+#$ -cwd
+#$ -j y
+#$ -N {*jobname*}
+#$ -m es
+#$ -V
+#$ -pe impi 16
+#$ -o ll_out
+#$ -e ll_er
+#$ -S /bin/bash
+{*precommand*}
+{*vaspcommand*}
+{*postcommand*}

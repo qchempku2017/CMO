@@ -1,0 +1,11 @@
+compaxis:
+    - CaO
+    - MgO
+enforce_occu:
+    - 0.0
+    - 1.0
+sample_step:
+    8
+sm_type:
+    an_frame
+
