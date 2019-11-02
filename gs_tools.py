@@ -285,7 +285,7 @@ class GScanonical(MSONable):
                                 break
                     if not _in_b_clusters:
                         b_clusters.append(b_cluster_ew)
-                        eci_return.append(b_eci_ew if len(b_cluster_ew)==1 else: b_eci_ew*2)
+                        eci_return.append(b_eci_ew if len(b_cluster_ew)==1 else b_eci_ew*2)
 
                 self._bclus_corrected.append(b_clusters)
                 self._ecis_corrected.append(eci_return)
@@ -363,7 +363,7 @@ class GScanonical(MSONable):
         m.update()
         m.optimize()
         
-        maxsat_res = [(x_id+1) for x_id in x if x[x_id].x else -(x_id+1)]
+        maxsat_res = [(x_id+1) if x[x_id].x else -(x_id+1) for x_id in x]
         maxsat_res = sorted(maxsat_res,key=lambda x:abs(x))
         cs = self.ce.supercell_from_matrix(self.enumlist[mat_id])
         cs_bits = get_bits(cs.supercell)

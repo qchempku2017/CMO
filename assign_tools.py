@@ -21,7 +21,7 @@ we've found a better way to assign oxidation states.
 """
 
 from __future__ import division
-__author__ 'Julia Yang & Fengyu  Xie'
+__author__ = 'Julia Yang & Fengyu  Xie'
 
 from charge_data import Domains_dict, Fix_Charges_dict
 
@@ -72,7 +72,7 @@ def assign_single(s_ori,prop,cutoffs,v_species):
         if site_element in Fix_Charges_dict:#Needs correction.
             oxi = Fix_Charges_dict[site_element]
             site_sp = make_specie_string(site_element,oxi)
-        elif:
+        else:
             site_v_sps = []
             site_cutoffs = []
             for cutoff,v_sp in zip(cutoffs,v_species):

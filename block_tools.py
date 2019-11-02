@@ -220,7 +220,7 @@ class CEBlock(object):
         return self._original_ecis
 
     @property
-     def splitted_bclusters(self):
+    def splitted_bclusters(self):
         # Mapping rule of a site indexed i in original SC to images:(x:+x, y:+y, z:+z)(x,y,z<=extend_range):
         # new_index = i + (x*(range+1)**2+y*(range+1)+z)*n_bits_sc
         # When range=1, a clustere would be splitted into 7 images.
@@ -311,7 +311,7 @@ class CEBlock(object):
         while time.time()-start_time<=7200: #2h time limit
             # solving linear model
             m = Model("lambda-solving")
-            lambdas = m.addVars(self.num_of_lambdas,,lb=0.0, ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
+            lambdas = m.addVars(self.num_of_lambdas, lb=0.0, ub=1.0) #Refer to help(Model.addVars) for more info, add all lambdas here
             E = m.addVar(vtype=GRB.CONTINUOUS,name="E",lb=-GRB.INFINITY, ub=GRB.INFINITY)
             m.update()
             m.setObjective(E,GRB.MAXIMIZE)
@@ -340,7 +340,7 @@ class CEBlock(object):
             mx_model,x = self._maxsat_model_forblk(maxsat_bclus,maxsat_ecis)
             mx_model.optimize()
 
-            new_config = [(x_id+1) for x_id in x if x[x_id].x else -(x_id+1)]
+            new_config = [(x_id+1) if x[x_id].x else -(x_id+1) for x_id in x]
             new_config = sorted(new_config,key=lambda x:abs(x))
 
             if new_config in self._configs:
@@ -362,9 +362,9 @@ class CEBlock(object):
         a_config = tuple(vars_in_sc,vars_in_sc_x+1,vars_in_sc_y+1,vars_in+sc_z+1)
         a_clusterfunc_set = tuple(in_sc(ewald_corrected, if needed),in_sc_x+1,in_sc_y+1,in_sc_z+1)
         """
-        if self.init_method = 'mc':
+        if self.init_method == 'mc':
             iniconfigs = self._mc_sampling()
-        elif self.init_method = 'random':
+        elif self.init_method == 'random':
             iniconfigs = self._rand_sampling()
         else:
             raise NotImplementedError("Initialization method not implemented.")
@@ -585,3 +585,14 @@ class CEBlock(object):
         #Set objective
         obj = GenExpr()
         for bc,eci in zip(soft_bcs,soft_ecis):
+            clause = 1
+            for bit in bc:
+                clause = clause*x[bit-1]
+            obj+=eci*clause
+
+        m.setObjective(obj,GRB.MINIMIZE)
+        m.setParam(GRB.Param.TimeLimit, 1800)
+        m.update()
+
+        return m,x
+
