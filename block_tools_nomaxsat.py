@@ -13,7 +13,7 @@ import random
 
 from itertools import product,chain
 from utils import *
-#from auxi_tools import add_softcls_terms
+from auxi_tools import *
 
 """
     Note: Now using openwbo as the only solver.
@@ -583,16 +583,16 @@ class CEBlock(object):
                 hard += x[bit-1]
             m.addConstr(hard<=1)
         
-        #add_softcls_terms(m,x,soft_bcs,soft_ecis)
         #Set objective
-        obj = GenExpr()
-        for bc,eci in zip(soft_bcs,soft_ecis):
-            clause = 1
-            for bit in bc:
-                clause = clause*x[bit-1]
-            obj+=eci*clause
-
-        m.setObjective(obj,GRB.MINIMIZE)
+#        obj = GenExpr()
+#        for bc,eci in zip(soft_bcs,soft_ecis):
+#            clause = 1
+#            for bit in bc:
+#                clause = clause*x[bit-1]
+#            obj+=eci*clause
+#
+#        m.setObjective(obj,GRB.MINIMIZE)
+        add_softcls_terms(m,x,soft_bcs,soft_ecis)
         m.setParam(GRB.Param.TimeLimit, 1800)
         m.update()
 

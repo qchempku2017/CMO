@@ -409,8 +409,8 @@ class ClusterExpansion(object):
         """
         symops = SpacegroupAnalyzer(structure).get_symmetry_operations()
         #get the sites to expand over
-        sites_to_expand = [site for site in structure if site.species_and_occu.num_atoms < 0.99 \
-                            or len(site.species_and_occu) > 1]
+        sites_to_expand = [site for site in structure if site.species.num_atoms < 0.99 \
+                            or len(site.species) > 1]
         expansion_structure = Structure.from_sites(sites_to_expand)
         clusters = cls._clusters_from_radii(expansion_structure, radii, symops)
         return cls(structure=structure, expansion_structure=expansion_structure, symops=symops, sm_type = sm_type, \

@@ -76,7 +76,7 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
 def _was_generated(x):
     return 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
 
-def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=None):
+def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=None,outdir='vasp_run'):
     '''This function checks the previous calculation directories when called. If no previous calculations, it
        generates the intial pool. If there are previous calculations, add new sampled structures based on 
        structure selection rule.
@@ -107,7 +107,7 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
                 calculated_structures[RO_old_string].append(Poscar.from_file(os.path.join(root,'POSCAR').structure))
                 struct_id = int(root.split(os.sep[-1]))
     else: 
-        print("No previous calculations, generating the intial pool.")
+        print("No previous calculations, generating the initial pool.")
  
     mc_structs={};
     if compaxis:
@@ -268,7 +268,7 @@ def _write_mc_structs(unique_structs,outdir='vasp_run'):
                     axisfile.write(ro_axis_strings[RO_string])
         for i, (struct,T) in enumerate(structs):
             if RO_string in calculated_max_ids:
-                structDir = os.path.join(compPathDir,str(i+calculated_max_ids[RO_string]))
+                structDir = os.path.join(compPathDir,str(i+calculated_max_ids[RO_string]+1))
             else:
                 structDir = os.path.join(compPathDir,str(i))
 
@@ -507,7 +507,7 @@ class StructureGenerator(MSONable):
         vasp_settings: setting parameters for vasp calcs. Is in dictionary form. Keys are 'functional','num_kpoints','additional_vasp_settings'(in dictionary form), 'strain'(in matrix or list form)
         """
         if os.path.isfile(prim_file):
-            self.prim = CifPrser(prim_file).get_structures()[0]
+            self.prim = CifParser(prim_file).get_structures()[0]
         else:
             raise ValueError("Primitive cell file can not be found, stopping!")
 
@@ -567,7 +567,7 @@ class StructureGenerator(MSONable):
             make an analyzer call!
         """
         _unique_structs = _get_mc_structs(self.sc_ro,self.ce,self.ecis,Prim=self.prim,TLst=[500, 1500, 10000],\
-                            compaxis= self.comp_axis)
+                            compaxis= self.comp_axis,outdir=self.outdir)
         ss = StructureSelector(self.ce) #Using Nystrom selection by default
 
         _unique_structs_buff = []
@@ -578,7 +578,7 @@ class StructureGenerator(MSONable):
         if len(self._pool)==0:
             n_init = min(3*len(_unique_structs),len(_pool))
             print("Initializing CE with {} chosen structures.".format(n_init))
-            selected_inds = ss.initialzation(_pool,n_init=n_init)
+            selected_inds = ss.initialization(_pool,n_init=n_init)
         else:
             n_add = len(_unique_structs)
             print("Updating CE with {} chosen structures.".format(n_add))

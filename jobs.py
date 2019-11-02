@@ -40,7 +40,7 @@ class CEJob(object):
         Runner is the pivot. Still looking at it. Using old stuff as alternative.
     """
     def __init__(self,\
-                 n_sc_select=10,transmat=None,compaxis=None,enforce_occu=None,\
+                 n_sc_select=10,transmat=None,compaxis=None,enforced_occu=None,\
                  sample_step=1,vasp_settings='vasp_settings.mson',max_sc_size=64,\
 
                  ce_radius=None,max_de=100,max_ew=3,sm_type='pmg_sm',ltol=0.2,\
@@ -54,7 +54,7 @@ class CEJob(object):
                  postcommand="", checking_interval = 60\
                  ):
         """
-            All parameters are optional, but be careful with enforce_occu, and I highly recommend you to set this up!
+            All parameters are optional, but be careful with enforced_occu, and I highly recommend you to set this up!
             Also, you'd better set up the vaspcommand option manually.
 
             1st row: generator options. Settings for vasp should be written in another file: vasp_settings.mson
@@ -63,7 +63,7 @@ class CEJob(object):
                         example, in disordered rock-salt's 2-site prim cell, you can use [[1,1,0],[1,0,1],[0,1,1]]
               compaxis: The composition axis to project your chemical formula(Li0.1CoO2 -> 0.05Li2O + 1CoO2, then compaxis=['Li2O','CoO2']). 
                         If none, will not do projection;
-              enforce_occu: Minimum occupation fraction on each site, in dictionary. For example, in disordered rock-salt, if you have no constraints 
+              enforced_occu: Minimum occupation fraction on each site, in dictionary. For example, in disordered rock-salt, if you have no constraints 
                             on cation sites while prohibiting anion vacancies, you should use: [0.0,1.0];
               sampling_step: For each sublattice, we will flip sampling_step number of sites into another specie each step of enumeration;
               vasp_settings: File name that contains vasp_setting.
@@ -89,7 +89,7 @@ class CEJob(object):
         self.n_sc_select = n_sc_select  
         self.transmat = transmat        
         self.compaxis = compaxis        
-        self.enforce_occu = enforce_occu
+        self.enforced_occu = enforced_occu
         self.sample_step = sample_step
         self.vasp_settings = vasp_settings
         self.max_sc_size = max_sc_size
@@ -340,7 +340,7 @@ class CEJob(object):
         n_sc_select=d['n_sc_select'] if 'n_sc_select' in d else 10
         transmat=d['transmat'] if 'transmat' in d else None
         compaxis=d['compaxis'] if 'compaxis' in d else None       
-        enforce_occu=d['enforce_occu'] if 'enforce_occu' in d else None
+        enforced_occu=d['enforced_occu'] if 'enforced_occu' in d else None
         sample_step=d['sample_step'] if 'sample_step' in d else 1
         vasp_settings=d['vasp_settings'] if 'vasp_settings'in d else 'vasp_settings.mson'
         max_sc_size=d['max_sc_size'] if 'max_sc_size' in d else 64
@@ -375,7 +375,7 @@ class CEJob(object):
         return cls(n_sc_select=n_sc_select,\
                    transmat=transmat,\
                    compaxis=compaxis,\
-                   enforce_occu=enforce_occu,\
+                   enforced_occu=enforced_occu,\
                    sample_step=sample_step,\
                    vasp_settings=vasp_settings,\
                    max_sc_size=max_sc_size,\
@@ -413,7 +413,7 @@ class CEJob(object):
         return {'n_sc_select':self.n_sc_select,\
                 'transmat':self.transmat,\
                 'compaxis':self.compaxis,\
-                'enforce_occu':self.enforce_occu,\
+                'enforced_occu':self.enforced_occu,\
                 'sample_step':self.sample_step,\
                 'vasp_settings':self.vasp_settings,\
                 'max_sc_size':self.max_sc_size,\
