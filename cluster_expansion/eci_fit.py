@@ -29,6 +29,11 @@ from itertools import chain
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen import Composition, Structure
 from pymatgen.analysis.phase_diagram import PhaseDiagram, PDEntry
+
+import sys
+cwd=os.path.dirname(os.path.realpath(__file__))
+sys.path.append(cwd)
+#This is to tell python where to find module compressive and ce. We will no longer use pyabinitio equivalence.
 from compressive.bregman import split_bregman #split bregman not needed if using gs_preserve or cvxopt_l1
 from ce import ClusterExpansion
 

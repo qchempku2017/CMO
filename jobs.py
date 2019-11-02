@@ -47,7 +47,7 @@ class CEJob(object):
                  stol=0.15,angle_tol=5,fit_solver='cvxopt_l1',basis='01',weight='unweighted',\
 
                  gen_file = 'generator.mson', ana_file = 'analyzer.mson', data_file = 'calcdata.mson',\
-                 ce_file = 'ce.mson', run_dir = 'vasp_run', gs_dir = 'gs_run', prim_file = 'prim.cif',\
+                 ce_file = 'ce.mson', run_dir = 'vasp_run', prim_file = 'prim.cif',\
                  rmse_file = 'rmse_cvs.mson',sub_temp = 'sub_template.txt',\
 
                  precommand="", vaspcommand = "mpiexec.hydra -n $NSLOTS pvasp.5.4.4.intel >> vasp.out",\
@@ -110,7 +110,6 @@ class CEJob(object):
         self.ce_file = ce_file
         self.data_file = data_file
         self.run_dir = run_dir
-        self.gs_dir = gs_dir
         self.prim_file = prim_file
         self.rmse_file = rmse_file
 
@@ -182,7 +181,7 @@ class CEJob(object):
                                prim_file = self.prim_file, \
                                calc_data_file = self.data_file, \
                                ce_file = self.ce_file,\
-                               ce_radius = self.ce_radius
+                               ce_radius = self.ce_radius,\
                                max_de = self.max_de,\
                                max_ew = self.max_ew,\
                                sm_type = self.sm_type,\
@@ -243,7 +242,7 @@ class CEJob(object):
         import stat
         
         #prepare the submission script
-        with open(self.sub_temp) as temp_file
+        with open(self.sub_temp) as temp_file:
             template = temp_file.read()
         cwd = os.getcwd()
         jobname = os.path.split(cwd)[-1]+'_ce'
@@ -292,7 +291,7 @@ class CEJob(object):
             all_jobs = q+j
             all_Finished = True
             for job in all_jobs:
-                if job['JB_name'] == jobname
+                if job['JB_name'] == jobname:
                     all_Finished = False
                     break
             if all_Finished:
@@ -339,39 +338,39 @@ class CEJob(object):
     @classmethod
     def from_dict(cls,d):
         n_sc_select=d['n_sc_select'] if 'n_sc_select' in d else 10
-        transmat=d['transmat'] if 'transmat' in d else: None
-        compaxis=d['compaxis'] if 'compaxis' in d else: None       
-        enforce_occu=d['enforce_occu'] if 'enforce_occu' in d else: None
-        sample_step=d['sample_step'] if 'sample_step' in d else: 1
-        vasp_settings=d['vasp_settings'] if 'vasp_settings'in d else: 'vasp_settings.mson'
-        max_sc_size=d['max_sc_size'] if 'max_sc_size' in d else: 64
+        transmat=d['transmat'] if 'transmat' in d else None
+        compaxis=d['compaxis'] if 'compaxis' in d else None       
+        enforce_occu=d['enforce_occu'] if 'enforce_occu' in d else None
+        sample_step=d['sample_step'] if 'sample_step' in d else 1
+        vasp_settings=d['vasp_settings'] if 'vasp_settings'in d else 'vasp_settings.mson'
+        max_sc_size=d['max_sc_size'] if 'max_sc_size' in d else 64
 
-        ce_radius=d['ce_radius'] if 'ce_radius' in d else: None
-        max_de=d['max_de'] if 'max_de' in d else: 100
-        max_ew=d['max_ew'] if 'max_ew' in d else: 3
-        sm_type=d['sm_type'] if 'sm_type' in d else: 'pmg_sm'
-        ltol=d['ltol'] if 'ltol' in d else: 0.2
-        stol=d['stol'] if 'stol'in d else: 0.15
-        angle_tol=d['angle_tol'] if 'angle_tol' in d else: 5
-        fit_solver=d['fit_solver'] if 'fit_solver' in d else: 'cvxopt_l1'
-        basis=d['basis'] if 'basis' in d else: '01'
-        weight=d['weight'] if 'weight' in d else: 'unweighted'
+        ce_radius=d['ce_radius'] if 'ce_radius' in d else None
+        max_de=d['max_de'] if 'max_de' in d else 100
+        max_ew=d['max_ew'] if 'max_ew' in d else 3
+        sm_type=d['sm_type'] if 'sm_type' in d else 'pmg_sm'
+        ltol=d['ltol'] if 'ltol' in d else 0.2
+        stol=d['stol'] if 'stol'in d else 0.15
+        angle_tol=d['angle_tol'] if 'angle_tol' in d else 5
+        fit_solver=d['fit_solver'] if 'fit_solver' in d else 'cvxopt_l1'
+        basis=d['basis'] if 'basis' in d else '01'
+        weight=d['weight'] if 'weight' in d else 'unweighted'
 
-        gen_file=d['gen_file'] if 'gen_file' in d else: 'generator.mson'
-        ana_file=d['ana_file'] if 'ana_file' in d else: 'analyzer.mson'
-        data_file=d['data_file'] if 'data_file' in d else: 'calcdata.mson'
-        ce_file=d['ce_file'] if 'ce_file' in d else: 'ce.mson'
-        run_dir=d['run_dir'] if 'run_dir' in d else: 'vasp_run'
-        gs_dir=d['gs_dir'] if 'gs_dir' in d else: 'gs_run'
-        prim_file=d['prim_file'] if 'prim_file' in d else: 'prim.cif'
-        rmse_file=d['rmse_file'] if 'rmse_file' in d else: 'rmse_cvs.mson'
-        sub_temp=d['sub_temp'] if 'sub_temp' in d else: 'sub_template.txt'
+        gen_file=d['gen_file'] if 'gen_file' in d else 'generator.mson'
+        ana_file=d['ana_file'] if 'ana_file' in d else 'analyzer.mson'
+        data_file=d['data_file'] if 'data_file' in d else 'calcdata.mson'
+        ce_file=d['ce_file'] if 'ce_file' in d else 'ce.mson'
+        run_dir=d['run_dir'] if 'run_dir' in d else 'vasp_run'
+        #gs_dir=d['gs_dir'] if 'gs_dir' in d else 'gs_run'
+        prim_file=d['prim_file'] if 'prim_file' in d else 'prim.cif'
+        rmse_file=d['rmse_file'] if 'rmse_file' in d else 'rmse_cvs.mson'
+        sub_temp=d['sub_temp'] if 'sub_temp' in d else 'sub_template.txt'
 
-        precommand=d['precommand'] if 'precommand' in d else: ""
-        vaspcommand=d['vaspcommand'] if 'vaspcommand' in d else:\
+        precommand=d['precommand'] if 'precommand' in d else ""
+        vaspcommand=d['vaspcommand'] if 'vaspcommand' in d else\
                     "mpiexec.hydra -n $NSLOTS pvasp.5.4.4.intel" #This command is for ginar only
-        postcommand=d['postcommand'] if 'postcommand' in d else: ""
-        checking_interval=d['checking_interval'] if 'checking_interval' in d else: 60
+        postcommand=d['postcommand'] if 'postcommand' in d else ""
+        checking_interval=d['checking_interval'] if 'checking_interval' in d else 60
         
         return cls(n_sc_select=n_sc_select,\
                    transmat=transmat,\
@@ -393,7 +392,7 @@ class CEJob(object):
                    data_file = data_file,\
                    ce_file = ce_file,\
                    run_dir = run_dir,\
-                   gs_dir = gs_dir,\
+                   #gs_dir = gs_dir,\
                    prim_file = prim_file,\
                    rmse_file = rmse_file,\
                    sub_temp = sub_temp,\
@@ -423,7 +422,7 @@ class CEJob(object):
                 'max_de':self.max_de,\
                 'max_ew':self.max_ew,\
                 'sm_type':self.sm_type,\
-                'ltol':self.ltol,'stol':self.stol,'angle_tol'=self.angle_tol,\
+                'ltol':self.ltol,'stol':self.stol,'angle_tol':self.angle_tol,\
                 'fit_solver':self.fit_solver,\
                 'basis':self.basis,
                 'weight':self.weight,\
@@ -433,7 +432,7 @@ class CEJob(object):
                 'data_file':self.data_file,\
                 'ce_file':self.ce_file,\
                 'run_dir':self.run_dir,\
-                'gs_dir':self.gs_dir,\
+                #'gs_dir':self.gs_dir,\
                 'prim_file':self.prim_file,\
                 'rmse_file':self.rmse_file,\
                 'sub_temp':self.sub_temp,\
@@ -451,8 +450,10 @@ class CEJob(object):
 
 
 class GSCanonicalJob(object):
-    def __init__(self):
-        raise NotImplementedError()
+    def __init__(self,ce_file='ce.mson',calc_data_file='calcdata.mson',gs_dir='gs_run'):
+        self.ce_file = ce_file
+        self.calc_data_file = calc_data_file
+        self.gs_dir = gs_dir
 
     def run_gs(self):
         """
@@ -464,3 +465,24 @@ class GSCanonicalJob(object):
 
         with open(self.gs_file,'w') as gs_out:
             json.dump(gss_on_hull,gs_out)
+
+    def as_dict(self):
+        return {'ce_file':self.ce_file,
+                'calc_data_file':self.calc_data_file,
+                'gs_dir':self.gs_dir
+               }
+
+    @classmethod
+    def from_dict(cls,d):
+        ce_file=d['ce_file'] if 'ce_file' in d else 'ce.mson'
+        calc_data_file=d['calc_data_file'] if 'calc_data_file' in d else 'calcdata.mson'
+        gs_dir=d['gs_dir'] if 'gs_dir' in d else 'gs_run'
+
+        return cls(ce_file=ce_file,\
+                   calc_data_file=calc_data_file,\
+                   gs_dir=gs_dir)
+
+    @classmethod
+    def from_file(cls,filename='ce_options.yaml'):
+        with open(filename,'r') as fin:
+            return cls.from_dict(yaml.safe_load(fin))

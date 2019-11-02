@@ -15,6 +15,11 @@ from copy import deepcopy
 import os
 
 from pymatgen.analysis.structure_matcher import StructureMatcher
+
+import sys
+cwd=os.path.dirname(os.path.realpath(__file__))
+sys.path.append(cwd)
+
 from ce import Cluster, SymmetrizedCluster, get_bits
 import logging
 

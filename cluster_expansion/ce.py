@@ -9,11 +9,17 @@ from pymatgen.util.coord import is_coord_subset, lattice_points_in_supercell, co
             coord_list_mapping_pbc, is_coord_subset_pbc
 from monty.json import MSONable
 from warnings import warn
-from utils import *
 
 import itertools
 import numpy as np
 
+import sys
+import os
+cwd = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(cwd)
+# This is to tell python to find module util and ce_utils under the same directory of this file.
+
+from utils import *
 from ce_utils import delta_corr_single_flip
 
 SITE_TOL = 1e-6
