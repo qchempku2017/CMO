@@ -32,7 +32,7 @@ from monty.serialization import dumpfn
 ## json acceptable class. So if you see errors like: 'ndarray' not serializable in json, and can't find why,
 ## just get over it and use dumpfn.
 
-from assign_tool import ChargeAssign
+from assign_tools import ChargeAssign
 
 #### Private tools ####
 # This one is deprecated
