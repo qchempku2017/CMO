@@ -228,7 +228,7 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
                         unique = False
                         break
             if unique:
-                unique_structs[RO_string].append((struct,T))
+                unique_structs[RO_string].append(struct)
                 unqCnt += 1
     print('Obtained %d unique occupied random structures.'%unqCnt)
 
@@ -266,7 +266,7 @@ def _write_mc_structs(unique_structs,outdir='vasp_run'):
             if not os.path.isfile(axis_file_path):
                 with open(axis_file_path,'w') as axisfile:
                     axisfile.write(ro_axis_strings[RO_string])
-        for i, (struct,T) in enumerate(structs):
+        for i, struct in enumerate(structs):
             if RO_string in calculated_max_ids:
                 structDir = os.path.join(compPathDir,str(i+calculated_max_ids[RO_string]+1))
             else:
@@ -566,8 +566,22 @@ class StructureGenerator(MSONable):
             Does not check if ce.mson is generated! So please make sure that, before two StructureGenerator calls,
             make an analyzer call!
         """
-        _unique_structs = _get_mc_structs(self.sc_ro,self.ce,self.ecis,Prim=self.prim,TLst=[500, 1500, 10000],\
+        #This part is for debug only
+        if os.path.isfile('pool.temp'):
+            with open('pool.temp') as temp_file:
+                _unique_structs_d = json.load(temp_file)
+            _unique_structs = {}
+            _unique_structs = {comp:[Structure.from_dict(struct) for struct in _unique_structs_d[comp]]\
+                               for comp in _unique_structs_d}
+        #
+        else:
+            _unique_structs = _get_mc_structs(self.sc_ro,self.ce,self.ecis,Prim=self.prim,TLst=[500, 1500, 10000],\
                             compaxis= self.comp_axis,outdir=self.outdir)
+            with open('pool.temp','w') as temp_file:
+                _unique_structs_d = {comp:[struct.as_dict() for struct in _unique_structs[comp]] \
+                                     for comp in _unique_structs}
+                json.dump(_unique_structs_d,temp_file)
+
         ss = StructureSelector(self.ce) #Using Nystrom selection by default
 
         _unique_structs_buff = []
@@ -595,6 +609,7 @@ class StructureGenerator(MSONable):
 
         _write_mc_structs(_unique_structs_selected,outdir=self.outdir)
         self._write_vasp_inputs()
+        os.remove('pool.temp')        
 
     def _write_vasp_inputs(self):
         if self.vasp_settings:
