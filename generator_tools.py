@@ -223,7 +223,7 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
                         unique = False
                         break
             if unique:
-                for ostruct,T in unique_structs[RO_string]:
+                for ostruct in unique_structs[RO_string]:
                     if sm.fit(struct, ostruct):
                         unique = False
                         break
@@ -232,9 +232,12 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
                 unqCnt += 1
     print('Obtained %d unique occupied random structures.'%unqCnt)
 
-    return unique_structs
+    if compaxis:
+        return unique_structs,ro_axis_strings
+    else:
+        return unique_structs,None
 
-def _write_mc_structs(unique_structs,outdir='vasp_run'):
+def _write_mc_structs(unique_structs,ro_axis_strings,outdir='vasp_run'):
     # Save structures
     print('#### MC Final Saving ####')
     if not os.path.isdir(outdir):
@@ -261,7 +264,7 @@ def _write_mc_structs(unique_structs,outdir='vasp_run'):
         if not os.path.isfile(occu_file_path):
             with open(occu_file_path,'w') as occufile:
                 occufile.write(RO_string)
-        if compaxis:
+        if ro_axis_string:
             axis_file_path = os.path.join(compPathDir,'axis')
             if not os.path.isfile(axis_file_path):
                 with open(axis_file_path,'w') as axisfile:
@@ -302,7 +305,7 @@ def _generate_axis_ref(compounds):
     """
     ###Preprocessing###
     compSpecieNums = {}
-    # Get representative specie in a compound to make a calculation of composition from site enumeration easier.
+    # Get representatEADME.mdie in a compound to make a calculation of composition from site enumeration easier.
     compUniqSpecies = {}
     for compStr in compounds:
         comp = Composition(compStr)
@@ -567,20 +570,24 @@ class StructureGenerator(MSONable):
             make an analyzer call!
         """
         #This part is for debug only
-        if os.path.isfile('pool.temp'):
+        if os.path.isfile('pool.temp') and os.path.isfile('ro_axis.temp'):
             with open('pool.temp') as temp_file:
                 _unique_structs_d = json.load(temp_file)
             _unique_structs = {}
             _unique_structs = {comp:[Structure.from_dict(struct) for struct in _unique_structs_d[comp]]\
                                for comp in _unique_structs_d}
+            with open('ro_axis.temp') as temp_file:
+                _ro_axis_strings = json.load(temp_file)
         #
         else:
-            _unique_structs = _get_mc_structs(self.sc_ro,self.ce,self.ecis,Prim=self.prim,TLst=[500, 1500, 10000],\
+            _unique_structs,_ro_axis_strings = _get_mc_structs(self.sc_ro,self.ce,self.ecis,Prim=self.prim,TLst=[500, 1500, 10000],\
                             compaxis= self.comp_axis,outdir=self.outdir)
             with open('pool.temp','w') as temp_file:
                 _unique_structs_d = {comp:[struct.as_dict() for struct in _unique_structs[comp]] \
                                      for comp in _unique_structs}
                 json.dump(_unique_structs_d,temp_file)
+            with open('ro_axis.temp','w') as temp_file:
+                json.dump(_ro_axis_strings,temp_file)
 
         ss = StructureSelector(self.ce) #Using Nystrom selection by default
 
@@ -607,9 +614,10 @@ class StructureGenerator(MSONable):
                 _unique_structs_selected[comp]=[]
             _unique_structs_selected[comp].append(struct)
 
-        _write_mc_structs(_unique_structs_selected,outdir=self.outdir)
+        _write_mc_structs(_unique_structs_selected,_ro_axis_strings,outdir=self.outdir)
         self._write_vasp_inputs()
         os.remove('pool.temp')        
+        os.remove('ro_axis.temp')
 
     def _write_vasp_inputs(self):
         if self.vasp_settings:
