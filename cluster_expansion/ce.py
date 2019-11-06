@@ -815,8 +815,8 @@ class ClusterSupercell(object):
                                     stol=self.cluster_expansion.stol,
                                     angle_tol=self.cluster_expansion.angle_tol)
 
-        print('sc:\n',self.supercell_matrix,\
-              '\nstr:\n',self.cluster_expansion.supercell_matrix_from_structure(structure))
+        #print('sc:\n',self.supercell_matrix,\
+        #      '\nstr:\n',self.cluster_expansion.supercell_matrix_from_structure(structure))
         mapping = sm_no_sc.get_mapping(self.supercell, structure).tolist()
 
         if mapping is None:

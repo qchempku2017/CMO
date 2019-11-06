@@ -26,6 +26,7 @@ from pymatgen.core.periodic_table import Specie
 from pymatgen.core.composition import Composition
 from pymatgen.core.sites import PeriodicSite
 from pymatgen.analysis.elasticity.strain import Deformation
+from pymatgen.core.lattice import Lattice
 
 from itertools import permutations,product
 from operator import mul
@@ -48,6 +49,15 @@ def _get_ind_groups(Bits,Cations,Anions):
     i2 = [i for i, b in enumerate(Bits) if sorted(b) == sorted(Anions)];
     return i1, i2;
 
+def _is_proper_sc(sc,prim):
+    newmat = np.array(prim.lattice.matrix)@np.array(sc)
+    latt = Lattice(newmat)
+    angles = sorted([lattice.alpha,lattice.beta,lattice.gamma])
+    if np.linalg.cond(newmat)<=10 and not(angles[-1]<20 and angles[-2]<10):
+        return True
+    else:
+        return False
+
 def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
     '''
     Enumerate all possible supercell matrices and pick 10 random unskewd scs 
@@ -61,6 +71,8 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
         scs.extend(Get_Hermite_Matricies(int(det/trans_size)))
     print('Generated %d supercell matrices with max determinant %d'%(len(scs),maxDet))
     #print('Supercell Matrices:\n',scs)
+    print('Removing highly skewd structures to ensure structure matcher operation.')
+    scs = [sc for sc in scs if _is_proper_sc(sc,prim)]
     print('Picking %d random skew supercells and %d random rectangular supercells.'%(nSk,nRect))
     _is_diagonal = lambda sc: (sc[0][1]==0 and sc[0][2]==0 and sc[1][2]==0)
     scs_sk = [sc for sc in scs if not _is_diagonal(sc)]
@@ -92,6 +104,7 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
                 rocksalt systems.
     '''
     print('#### MC Initialization ####')
+    print('SM type:',CE.sm_type)
     calculated_structures = {}
 
     if os.path.isdir(outdir):
@@ -142,11 +155,12 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
 
         randStr =order.apply_transformation(randStr)
 
+        #print('randStr:\n',randStr,'\nce prim:\n',CE.structure)
         # Simulated annealing for better guess at ground state
         # You may want to change the number of MC flips for each temperature
 
         init_occu = clusSC.occu_from_structure(randStr)
-        # print("Starting occupation:", randStr)
+        print("Starting occupation:", init_occu)
         sa_occu = simulated_anneal(ecis=ecis, cluster_supercell=clusSC, occu=init_occu, ind_groups=indGrps,
                                    n_loops=20000, init_T=5100, final_T=100, n_steps=20)
         print("MC ground state acquired, analyzing composition.")
@@ -228,8 +242,14 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
                         unique = False
                         break
             if unique:
-                unique_structs[RO_string].append(struct)
-                unqCnt += 1
+                try:
+                    #Check if structure matcher works for this structure. If not, abandon.
+                    CE.corr_from_structure(struct)
+                    unique_structs[RO_string].append(struct)
+                    unqCnt += 1
+                except:
+                    continue
+
     print('Obtained %d unique occupied random structures.'%unqCnt)
 
     if compaxis:
@@ -264,7 +284,7 @@ def _write_mc_structs(unique_structs,ro_axis_strings,outdir='vasp_run'):
         if not os.path.isfile(occu_file_path):
             with open(occu_file_path,'w') as occufile:
                 occufile.write(RO_string)
-        if ro_axis_string:
+        if ro_axis_strings:
             axis_file_path = os.path.join(compPathDir,'axis')
             if not os.path.isfile(axis_file_path):
                 with open(axis_file_path,'w') as axisfile:
@@ -278,7 +298,7 @@ def _write_mc_structs(unique_structs,ro_axis_strings,outdir='vasp_run'):
             if not os.path.isdir(structDir): os.mkdir(structDir)
             Poscar(struct.get_sorted_structure()).write_file(os.path.join(structDir,'POSCAR'))
         RO_id += 1
-    print('Saving of %s successful. Writing VASP input files later.'%outdir)
+    print('Saving of %s successful.'%outdir)
 
 def _gen_vasp_inputs(SearchDir='vasp_run',functional='PBE', num_kpoints=25,add_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
     """
@@ -537,6 +557,7 @@ class StructureGenerator(MSONable):
             print("Not checking previous cluster expansion, using ewald as sampling criteria.")
             self.ce=ClusterExpansion.from_radii(self.prim,{2: 1},ltol=0.3,stol=0.2,angle_tol=2,\
                                        supercell_size='num_sites',use_ewald=True,use_inv_r=False,eta=None);
+            #Here we use pmg_sm as structure matcher.
             self.ecis=np.zeros(self.ce.n_bit_orderings+1); self.ecis[-1]=1;
 
         self.outdir =  outdir
