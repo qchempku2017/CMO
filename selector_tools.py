@@ -223,9 +223,9 @@ class StructureSelector():
             error = np.linalg.norm(origin_A)*10000
             return_indices_step = None
 
-            for i in range(n_iter):
+            for i in range(self.n_iter):
                 trial_indices_step = random.sample(total_indices, self.n_step)
-                trial_indices_current = trail_indices+trail_indices_step
+                trial_indices_current = trial_indices+trial_indices_step
                 
                 C = G[:, trial_indices_current]
 
@@ -237,7 +237,7 @@ class StructureSelector():
                     return_indices_step = trial_indices_step
                     error = re
             #print(error)
-            trial_indices = trail_indices+return_indices_step
+            trial_indices = trial_indices+return_indices_step
             total_indices = [idx for idx in total_indices if idx not in return_indices_step]
             
         return trial_indices
@@ -259,14 +259,14 @@ class StructureSelector():
             error = np.linalg.norm(origin_A)*10000
             return_indices_step = None
 
-            for i in range(n_iter):
+            for i in range(self.n_iter):
                 trial_indices_step = random.sample(total_indices, self.n_step)
-                trial_indices_current = trail_indices+trail_indices_step
+                trial_indices_current = trial_indices+trial_indices_step
                 
                 C = G[:, trial_indices_current]
                 R = G[trial_indices_current,:]
 
-                U = CX_decompose(G, C, R)
+                U = CUR_decompose(G, C, R)
 
                 re = np.linalg.norm(G - np.dot(np.dot(C, U),R))
 
@@ -274,7 +274,7 @@ class StructureSelector():
                     return_indices_step = trial_indices_step
                     error = re
             #print(error)
-            trial_indices = trail_indices+return_indices_step
+            trial_indices = trial_indices+return_indices_step
             total_indices = [idx for idx in total_indices if idx not in return_indices_step]
             
         return trial_indices

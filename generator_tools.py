@@ -52,7 +52,7 @@ def _get_ind_groups(Bits,Cations,Anions):
 def _is_proper_sc(sc,prim):
     newmat = np.array(prim.lattice.matrix)@np.array(sc)
     latt = Lattice(newmat)
-    angles = sorted([lattice.alpha,lattice.beta,lattice.gamma])
+    angles = sorted([latt.alpha,latt.beta,latt.gamma])
     if np.linalg.cond(newmat)<=10 and not(angles[-1]<20 and angles[-2]<10):
         return True
     else:

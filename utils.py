@@ -12,6 +12,7 @@ from itertools import permutations,product,combinations
 from functools import partial,reduce
 import os
 import json
+from pymatgen.analysis.elasticity.strain import Deformation
 
 ##################################
 ## General tools that will be frequently cross referenced.
