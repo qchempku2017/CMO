@@ -51,7 +51,7 @@ class CEJob(object):
                  rmse_file = 'rmse_cvs.mson',sub_temp = 'sub_template.txt',\
 
                  precommand="", vaspcommand = "mpiexec.hydra -n $NSLOTS pvasp.5.4.4.intel >> vasp.out",\
-                 postcommand="", checking_interval = 60\
+                 postcommand="", checking_interval = 120\
                  ):
         """
             All parameters are optional, but be careful with enforced_occu, and I highly recommend you to set this up!
@@ -217,7 +217,7 @@ class CEJob(object):
                                      enforced_occu = self.enforced_occu,\
                                      sample_step=self.sample_step,\
                                      max_sc_size = self.max_sc_size,\
-                                     sc_selec_num=self.n_sc_select,\
+                                     sc_selec_enum=self.n_sc_select,\
                                      comp_axis=self.compaxis,\
                                      transmat = self.transmat,\
                                      ce_file = self.ce_file,\
@@ -238,7 +238,6 @@ class CEJob(object):
         modify the code to support PBS or other queueing systems.
         """
         import re
-        import qstat #only for SGE queueing system
         import stat
         
         #prepare the submission script
@@ -286,17 +285,23 @@ class CEJob(object):
         print('Submissions done, waiting for calculations.')
         
         while True:
-            os.wait(self.checking_interval)
-            q,j = qstat.qstat()
-            all_jobs = q+j
-            all_Finished = True
-            for job in all_jobs:
-                if job['JB_name'] == jobname:
-                    all_Finished = False
+            time.sleep(self.checking_interval)
+            try:
+                import qstat #only for SGE queueing system
+                q,j = qstat.qstat()
+                all_jobs = q+j
+                #print("Current jobs:\n",q,j)
+                all_Finished = True
+                for job in all_jobs:
+                    if job['JB_name'] == jobname:
+                        all_Finished = False
+                        break
+                if all_Finished:
+                    print("Calculations done.")
                     break
-            if all_Finished:
-                print("Calculations done.")
-                break
+            except:
+                print('Queue status not normal, continuing.')
+                continue
 
     def run_ce(self,refit_only=False):
         """

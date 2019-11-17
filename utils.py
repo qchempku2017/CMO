@@ -13,7 +13,7 @@ from functools import partial,reduce
 import os
 import json
 from pymatgen.analysis.elasticity.strain import Deformation
-from pymatgen.io.vasp.inputs import Potcar
+from pymatgen.io.vasp.inputs import *
 from pymatgen.io.vasp.sets import MITRelaxSet
 
 ##################################

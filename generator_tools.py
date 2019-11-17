@@ -117,7 +117,7 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
                     RO_old_string = json.dumps(RO_old)
                 if RO_old_string not in calculated_structures:
                     calculated_structures[RO_old_string]=[]
-                calculated_structures[RO_old_string].append(Poscar.from_file(os.path.join(root,'POSCAR').structure))
+                calculated_structures[RO_old_string].append(Poscar.from_file(os.path.join(root,'POSCAR')).structure)
                 struct_id = int(root.split(os.sep[-1]))
     else: 
         print("No previous calculations, generating the initial pool.")
@@ -505,7 +505,7 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
 
 class StructureGenerator(MSONable):
     def __init__(self,prim_file='prim.cif', outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64,\
-                 sc_selec_num = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson'):
+                 sc_selec_enum = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson'):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
               rim is considered to be the origin of an independent sublattice. In MC enumeration and GS solver, composition conservation is done on 
@@ -539,7 +539,7 @@ class StructureGenerator(MSONable):
         self.enforced_occu = enforced_occu
         self.sample_step=sample_step
         self.max_sc_size=max_sc_size
-        self.sc_selec_num=sc_selec_num
+        self.sc_selec_enum=sc_selec_enum
         self.comp_axis = comp_axis
         self.transmat = transmat
         #print("Using transformation matrix {}".format(transmat))
@@ -581,7 +581,7 @@ class StructureGenerator(MSONable):
         # Enumerated supercells and compositions.
         if not self._sc_ro:
             self._sc_ro =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
-                                        self.sample_step, self.sc_selec_num, self.transmat)
+                                        self.sample_step, self.sc_selec_enum, self.transmat)
         return self._sc_ro
     #Share the same set of sc_ro across project.
 
@@ -691,8 +691,8 @@ class StructureGenerator(MSONable):
         if 'max_sc_size' in d: max_sc_size = d['max_sc_size'];
         else: max_sc_size = 64;
 
-        if 'sc_selec_num' in d: sc_selec_num = d['sc_selec_num'];
-        else: sc_selec_num = 10;
+        if 'sc_selec_enum' in d: sc_selec_enum = d['sc_selec_enum'];
+        else: sc_selec_enum = 10;
 
         if 'transmat' in d: transmat = d['transmat'];
         else: transmat = None;
@@ -706,12 +706,12 @@ class StructureGenerator(MSONable):
         if 'vasp_settings' in d: vasp_settings = d['vasp_settings'];
         else: vasp_settings = 'vasp_settings.mson';
 
-        if 'n_select' in d: n_select = d['n_select'];
-        else: n_select = 1;
+        #if 'n_select' in d: n_select = d['n_select'];
+        #else: n_select = 1;
         
         generator = cls(prim_file=prim_file, enforced_occu=enforced_occu, comp_axis=comp_axis, sample_step=sample_step,\
                         max_sc_size=max_sc_size, sc_selec_enum=sc_selec_enum, transmat=transmat, ce_file=ce_file,\
-                        outdir=outdir, vasp_settings=vasp_settings, n_select=n_select)
+                        outdir=outdir, vasp_settings=vasp_settings)
 
         if 'sc_ro' in d:
             generator._sc_ro = d['sc_ro']
@@ -723,12 +723,12 @@ class StructureGenerator(MSONable):
                 'comp_axis':self.comp_axis,\
                 'sample_step':self.sample_step,\
                 'max_sc_size':self.max_sc_size,\
-                'sc_selec_num':self.sc_selec_num,\
+                'sc_selec_enum':self.sc_selec_enum,\
                 'transmat':self.transmat,\
                 'ce_file':self.ce_file,\
                 'outdir':self.outdir,\
                 'vasp_settings':self.vasp_settings,\
-                'n_select':self.n_select,\
+                #'n_select':self.n_select,\
                 'sc_ro':self.sc_ro,\
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
