@@ -174,6 +174,7 @@ class CEJob(object):
         return s
 
     def _analyzer_call(self):
+        print('#### Analyzer Call ####')
         if os.path.isfile(self.ana_file):
             ana = CalcAnalyzer.from_settings(setting_file=self.ana_file)
         else:
@@ -209,6 +210,7 @@ class CEJob(object):
             json.dump(rmse_cvs,rc_out)  
 
     def _generator_call(self):
+        print('#### Generator Call ####')
         if os.path.isfile(self.gen_file):
             gen = StructureGenerator.from_settings(setting_file=self.gen_file)
         else:
@@ -237,6 +239,7 @@ class CEJob(object):
         By default, all the parameters are only based on an SGE queueing system. You may install other APIs and  
         modify the code to support PBS or other queueing systems.
         """
+        print('#### Calculation Call ####')
         import re
         import stat
         
@@ -285,23 +288,24 @@ class CEJob(object):
         print('Submissions done, waiting for calculations.')
         
         while True:
-            time.sleep(self.checking_interval)
-            try:
-                import qstat #only for SGE queueing system
-                q,j = qstat.qstat()
-                all_jobs = q+j
-                #print("Current jobs:\n",q,j)
-                all_Finished = True
-                for job in all_jobs:
-                    if job['JB_name'] == jobname:
-                        all_Finished = False
-                        break
-                if all_Finished:
-                    print("Calculations done.")
+            #try:
+            import qstat #only for SGE queueing system
+            q,j = qstat.qstat()
+            all_jobs = q+j
+            #print("Current jobs:\n",q,j)
+            all_Finished = True
+            for job in all_jobs:
+                if job['JB_name'] == jobname:
+                    all_Finished = False
                     break
-            except:
-                print('Queue status not normal, continuing.')
-                continue
+            if all_Finished:
+                print("Calculations done.")
+                break
+            #except:
+            #    print('Queue status not normal, continuing.')
+            #    continue
+            print('Time:',time.time())
+            time.sleep(self.checking_interval)
 
     def run_ce(self,refit_only=False):
         """

@@ -637,8 +637,8 @@ class StructureGenerator(MSONable):
 
         _write_mc_structs(_unique_structs_selected,_ro_axis_strings,outdir=self.outdir)
         self._write_vasp_inputs()
-        os.remove('pool.temp')        
-        os.remove('ro_axis.temp')
+        os.rename('pool.temp','pool.old')        
+        os.rename('ro_axis.temp','ro_axis.old')
 
     def _write_vasp_inputs(self):
         if self.vasp_settings:
