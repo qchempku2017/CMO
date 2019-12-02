@@ -6,7 +6,7 @@ from copy import deepcopy
 """
 
 
-def add_softcls_term(m,x,bcs,ecis):
+def add_softcls_terms(m,x,bcs,ecis):
     """
     Builds an auxilary network to reformulate the problem into binary quadratic programming.
     m: Gurobi model
@@ -36,8 +36,13 @@ def add_softcls_term(m,x,bcs,ecis):
                 reduced_bc = []
 
                 #divide the cluster into batches with length 2.
+                batches = []
                 for ba_id in range(len(current_bc)//2):
-                    batch = current_bc[2*ba_id:2*(ba_id+1)] if ba_id<len(current_bc)//2 else current_bc[2*ba_id:]
+                    batches.append(current_bc[2*ba_id:2*(ba_id+1)])
+                if len(current_bc)%2 == 1:
+                    batches.append([current_bc[-1]])
+                
+                for batch in batches:
                     if len(batch)>1: 
                         #If so, then this batch is a new pair that hasn't been auxiliarized before.
                         aux_v_ba = m.addVar(vtype=GRB.BINARY)

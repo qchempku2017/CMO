@@ -566,7 +566,8 @@ class StructureGenerator(MSONable):
             for root,dirs,files in os.walk(outdir):
                 if _was_generated(files):
                     self._pool.append(Poscar.from_file(os.path.join(root,'POSCAR').structure))
-
+        
+        self.vasp_file = vasp_settings
         if os.path.isfile(vasp_settings):
             print("Applying VASP settings in {}.".format(vasp_settings))
             with open(vasp_settings) as vs_in:
@@ -727,7 +728,7 @@ class StructureGenerator(MSONable):
                 'transmat':self.transmat,\
                 'ce_file':self.ce_file,\
                 'outdir':self.outdir,\
-                'vasp_settings':self.vasp_settings,\
+                'vasp_settings':self.vasp_file,\
                 #'n_select':self.n_select,\
                 'sc_ro':self.sc_ro,\
                 '@module':self.__class__.__module__,\

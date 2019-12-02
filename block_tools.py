@@ -3,7 +3,7 @@ __version__ = 1.0
 
 from gurobipy import *
 from utils import *
-from mc import *
+from cluster_expansion.mc import *
 
 from pymatgen.util.coord import lattice_points_in_supercell
 from pymatgen.core.sites import PeriodicSite

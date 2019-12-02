@@ -23,6 +23,7 @@ from analyzer_tools import *
 #from runner_tools import *
 from gs_tools import * 
 from utils import *
+from collections import OrderedDict
 
 class CEJob(object):
     """
@@ -295,7 +296,7 @@ class CEJob(object):
             #print("Current jobs:\n",q,j)
             all_Finished = True
             for job in all_jobs:
-                if job['JB_name'] == jobname:
+                if type(job)== OrderedDict or type(job)==dict and job['JB_name'] == jobname:
                     all_Finished = False
                     break
             if all_Finished:
@@ -492,6 +493,6 @@ class GSCanonicalJob(object):
                    gs_dir=gs_dir)
 
     @classmethod
-    def from_file(cls,filename='ce_options.yaml'):
+    def from_file(cls,filename='gs_options.yaml'):
         with open(filename,'r') as fin:
             return cls.from_dict(yaml.safe_load(fin))
