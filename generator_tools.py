@@ -550,7 +550,7 @@ class StructureGenerator(MSONable):
             with open(ce_file,'r') as Fid: cedata = json.load(Fid);
             self.ce=ClusterExpansion.from_dict(cedata['cluster_expansion']); 
             self.ecis=cedata['ecis']; 
-            print('Previous CE information:'); print(ce.structure);
+            print('Previous CE information:'); print(self.ce.structure);
 
         else:
             # No existing cluster expansion, we are building form start - use electrostatics only

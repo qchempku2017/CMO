@@ -432,7 +432,7 @@ class GScanonical(MSONable):
         scale = sc_size//self.formula_size
 
         scaled_composition = [{sp:sublat[sp]*comp_scale for sp in sublat} for sublat in self.composition]
-        specie_names = [[str(sp) for sp in sorted(sublat.species_and_occu.keys())] for sublat in self.ce.structure]
+        specie_names = [[str(sp) for sp in sorted(sublat.species.keys())] for sublat in self.ce.structure]
         sublats = [bit_ind[i*sc_size:(i+1)*sc_size] for i in range(0,N_sites//sc_size)]
         bits_sp_sublat = [[[sublat[s_id][sp_id] for s_id in range(len(sublat))] \
                             for sp_id in range(len(sublat[0]))] for sublat in sublats]

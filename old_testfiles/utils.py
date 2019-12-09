@@ -12,6 +12,9 @@ from itertools import permutations,product,combinations
 from functools import partial,reduce
 import os
 import json
+from pymatgen.analysis.elasticity.strain import Deformation
+from pymatgen.io.vasp.inputs import *
+from pymatgen.io.vasp.sets import MITRelaxSet
 
 ##################################
 ## General tools that will be frequently cross referenced.
@@ -130,7 +133,7 @@ def Reversed(pair):
         
 def Is_Anion_Site(site):
     for sp in site.species.keys():
-        if GetIonChg(sp)<0:
+        if GetIonChg(str(sp))<0: #This is a pymatgen specie object, not directly treated as string!
             return True
     return False
 
@@ -175,7 +178,20 @@ def write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vas
         if Sym == 'Zr': POTSyms[i]='Zr_sv';
     Potcar(POTSyms,functional=functional).write_file(os.path.join(VASPDir,'POTCAR'));
 
-
+def get_bit_inds(sc):
+    """
+        Generate maxsat variable indices.
+    """
+    bit_inds = []
+    b_id = 1
+    for i,site in enumerate(sc):
+        site_bit_inds = []
+        for specie_id in range(len(site.species)-1):
+        #-1 since a specie on the site is taken as reference
+            site_bit_inds.append(b_id)
+            b_id+=1
+        bit_inds.append(site_bit_inds)
+    return bit_inds
 
 def Write_MAXSAT_input(soft_bcs,soft_ecis,bit_inds,maxsat_fin='maxsat.wcnf',\
                        MAXSAT_PATH='./solvers/',sc_size=None,conserve_comp=None,\
@@ -314,17 +330,4 @@ def Read_MAXSAT(MAXSAT_PATH='./solvers/',maxsat_fout='maxsat.out'):
     sorted(maxsat_res,key=lambda x:abs(x))
     return maxsat_res
 
-def get_bit_inds(sc):
-    """
-        Generate maxsat variable indices.
-    """
-    bit_inds = []
-    b_id = 1
-    for i,site in enumerate(sc):
-        site_bit_inds = []
-        for specie_id in range(len(site.species)-1):
-        #-1 since a specie on the site is taken as reference
-            site_bit_inds.append(b_id)
-            b_id+=1
-        bit_inds.append(site_bit_inds)
-    return bit_inds
+

@@ -33,6 +33,7 @@ from monty.serialization import dumpfn
 ## just get over it and use dumpfn.
 
 from assign_tools import ChargeAssign
+from utils import *
 
 #### Private tools ####
 # This one is deprecated
@@ -93,6 +94,7 @@ class CalcAnalyzer(object):
         self.basis = basis
         self.assign_algo = assign_algo
         
+        self.prim_file=prim_file
         self.prim = CifParser(prim_file).get_structures()[0]
 
         #Check if charge assignments are required.
@@ -182,6 +184,11 @@ class CalcAnalyzer(object):
         """
         print("Loading data from {}".format(self.vaspdir))
         self._load_data()
+
+#        print('Loaded data presaved to calcdata.tmp')
+#        with open('calcdata.tmp','w') as tmp:
+#            json.dump(self.calcdata,tmp)
+
         print("Updating cluster expansion.")
         #Use crystal nearest neighbor analyzer to find nearest neighbor distance, and set cluster radius according to it.
         
@@ -217,7 +224,9 @@ class CalcAnalyzer(object):
         else:
             raise ValueError('Weighting option not implemented!')
 
-        print("RMSE: {} eV/prim, num of points: {}.".format(self.ECIG.rmse,len(ValidStrs))); 
+        self.ECIG.generate()
+
+        print("RMSE: {} eV/prim, num of structures: {}.".format(self.ECIG.rmse,len(ValidStrs))); 
 
     
     def _load_data(self):
@@ -277,6 +286,7 @@ class CalcAnalyzer(object):
                         _is_unique = False
                         break
                 if not _is_unique:
+                    print('Entry {} alredy calculated before.'.format(root))
                     open(os.path.join(root,'accepted'),'a').close()
                     continue
                 n_inputs += 1
@@ -311,15 +321,10 @@ class CalcAnalyzer(object):
                     continue
                 TotE=Oszicar(os.path.join(root, 'OSZICAR')).final_energy;
                 # Checking convergence
+                Mag = []
+                for SiteInd,Site in enumerate(relaxed_struct.sites):
+                    Mag.append(np.abs(Out.magnetization[SiteInd]['tot']));
                
-                # Checking whether structure can be mapped to corr function.
-                # This is out deformation tolerance.     
-                try:
-                    self.ce.corr_from_structure(relaxed_deformed)
-                except:
-                    print("Entry {} too far from original lattice. Skipping.".format(root))
-                    open(os.path.join(root,'failed'),'a').close()
-                    continue
     
                 new_entry = {}
                 new_entry['input_structure']=input_struct.as_dict()
@@ -348,12 +353,10 @@ class CalcAnalyzer(object):
             if 'axis' in new_unassigned_strs[0][2]:
                 axis = []
             for compstring,root,new_entry in new_unassigned_strs:
-                Out=Outcar(os.path.join(root,'OUTCAR'))
-                Mag=[]
+               # Out=Outcar(os.path.join(root,'OUTCAR'))
+                Mag=new_entry['magmoms']
                 relaxed_struct = Structure.from_dict(new_entry['relaxed_structure'])
                 relaxed_deformed = Structure.from_dict(new_entry['relaxed_deformed'])
-                for SiteInd,Site in enumerate(relaxed_struct.sites):
-                    Mag.append(np.abs(Out.magnetization[SiteInd]['tot']));
                     # Throw out structures where oxidation states don't make charge balanced.
                 
                 mags.append(Mag)
@@ -361,36 +364,61 @@ class CalcAnalyzer(object):
                 relaxed_strs_pool.append(relaxed_struct)
                 relaxed_deformed_pool.append(relaxed_deformed)
                 comps.append(compstring)
-                inputs.append(new_entry['input_structure'])
+                inputs.append(Structure.from_dict(new_entry['input_structure']))
                 energies.append(new_entry['total_energy'])
                 if 'axis' in new_entry:
                     axis.append(new_entry['axis'])
                 
             CA = ChargeAssign(relaxed_strs_pool,mags,algo=self.assign_algo)
             relaxed_strs_assigned = CA.assigned_structures
-            relaxed_deformed_assigned = CA.extend_assignements(relaxed_deformed_pool,mags)
+            relaxed_deformed_assigned = CA.extend_assignments(relaxed_deformed_pool,mags)
             
             for i in range(len(inputs)):
                 if relaxed_strs_assigned[i] is not None and relaxed_deformed_assigned[i] is not None:
+                    # Checking whether structure can be mapped to corr function.
+                    # This is out deformation tolerance.     
+                    try:
+                        self.ce.corr_from_structure(relaxed_deformed_assigned[i])
+                    except:
+                        print("Entry {} too far from original lattice. Skipping.".format(roots[i]))
+                        open(os.path.join(roots[i],'failed'),'a').close()
+                        continue
+
                     assigned_entry = {}
-                    assigned_entry['input_structure']=inputs[i]
+                    assigned_entry['input_structure']=inputs[i].as_dict()
                     assigned_entry['relaxed_structure']=relaxed_strs_assigned[i].as_dict()
                     assigned_entry['relaxed_deformed']=relaxed_deformed_assigned[i].as_dict()
                     assigned_entry['total_energy']=energies[i]
                     assigned_entry['magmoms']=mags[i]
-                    if 'axis' in new_unassigned_strs[2]:
+                    if 'axis' in new_unassigned_strs[0][2]:
                         assigned_entry['axis']=axis[i]
-                    self.calcdata['composition'][comps[i]].append(assigned_entry)
-                    open(os.path.join(root,'accepted'),'a').close()
+                    self.calcdata['compositions'][comps[i]].append(assigned_entry)
+                    print('Entry {} accepted!'.format(roots[i]))
+                    open(os.path.join(roots[i],'accepted'),'a').close()
                     n_matched+=1
+
+                else:
+                    print("Entry {} can not be assigned. Skipping.".format(roots[i]))
+                    open(os.path.join(roots[i],'failed'),'a').close()
+                    continue
         else:
+            print('Doing non charged ce.')
             for compstring,root,new_entry in new_unassigned_strs:
-                self.calcdata['composition'][compstring].append(new_entry)
+                # Checking whether structure can be mapped to corr function.
+                # This is out deformation tolerance.     
+                try:
+                    self.ce.corr_from_structure(relaxed_deformed_assigned[i])
+                except:
+                    print("Entry {} too far from original lattice. Skipping.".format(root))
+                    open(os.path.join(root,'failed'),'a').close()
+                    continue
+
+                self.calcdata['compositions'][compstring].append(new_entry)
                 open(os.path.join(root,'accepted'),'a').close()
                 n_matched+=1
         # Data already deduplicated!
 
-        print('{}/{} structures matched in this run. Parsed vasp data saved into {}.'.format(n_matched,n_inputs,self.calc_data_file))
+        print('{}/{} structures matched in this run. Parsed vasp data will be saved into {}.'.format(n_matched,n_inputs,self.calc_data_file))
  
     def write_files(self):
         with open(self.calc_data_file,'w') as Fout:
@@ -479,7 +507,7 @@ class CalcAnalyzer(object):
         settings['solver'] = self.solver
         settings['basis'] = self.basis
         settings['weight'] = self.weight
-        settubgs['assign_algo'] = self.assign_algo
+        settings['assign_algo'] = self.assign_algo
         return settings
     
     def write_settings(self,settings_file='analyzer.mson'):

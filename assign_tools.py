@@ -60,7 +60,7 @@ import re
 def make_specie_string(element,oxi):
     if oxi>0:  return element+str(oxi)+'+'
     if oxi==0: return element
-    if oxi<0:  return element+str(oxi)+'-'
+    if oxi<0:  return element+str(abs(oxi))+'-'
 
 def make_element_string(specie):
     return re.sub(r'\d*(\+|\-)$','',specie)
@@ -68,10 +68,12 @@ def make_element_string(specie):
 def assign_single(s_ori,prop,cutoffs,v_species):
     remade_sites = []
     for site, site_prop in zip(s_ori,prop):
-        site_element = make_element_string(site.specie) #Needs improvement
-        if site_element in Fix_Charges_dict:#Needs correction.
+        site_element = make_element_string(str(site.specie)) 
+        if site_element in Fix_Charges_dict:
+            # No bayers process required.
             oxi = Fix_Charges_dict[site_element]
             site_sp = make_specie_string(site_element,oxi)
+            #print('site_sp:',site_sp)  
         else:
             site_v_sps = []
             site_cutoffs = []
@@ -81,7 +83,8 @@ def assign_single(s_ori,prop,cutoffs,v_species):
                     site_v_sps.append(v_sp)
 
             if site_prop > cutoffs[-1]:
-                site_sp = None #site_property overflowing!
+                site_sp = None #site_property overflowing! We assume this is not very frequent.
+                return None
             elif site_prop < cutoffs[0]:
                 site_sp = v_species[0]
             else:
@@ -91,6 +94,7 @@ def assign_single(s_ori,prop,cutoffs,v_species):
                         break
 
         remade_site = PeriodicSite(site_sp,site.frac_coords,site.lattice)
+        #print(remade_site)
         remade_sites.append(remade_site)
 
     return Structure.from_sites(remade_sites)
@@ -116,14 +120,16 @@ class ChargeAssign(object):
         site_properties: structure properties by site. Can be magmoms, or
         bader charges of site.
         """
+        print('#### Assignment call ####')
         self._pool = structure_pool
-        self.prop = site_properties
+        self.site_properties = site_properties
         self.algo = algo
         self._cutoffs = None
 
         self.elements = []
         for struct in structure_pool:
-            for element in struct.composition.keys():
+            for specie in struct.composition.keys():
+                element = make_element_string(str(specie))
                 if element not in self.elements:
                     self.elements.append(element)
         self.elements = sorted(self.elements)
@@ -143,13 +149,20 @@ class ChargeAssign(object):
                 for oxi,domain in domains_for_element:
                     self.domains.append(domain)
                     self.v_species.append(make_specie_string(element,oxi))
+            elif element not in Fix_Charges_dict:
+                raise ValueError('Warning: Element {} is not a fixed charge element, but its \
+                                  optimization domains has not been provided for algorithm {}!\
+                                  Structures can not be assigned.'\
+                                  .format(element,self.algo))
 
         self._assigned_structures = None
+        print('Initialized assignment with elements: {}\nDomains: {}\nMulti-valance species: {}'.format(self.elements,self.domains,self.v_species))
   
     @property
     def cutoffs(self):
         if self._cutoffs is None:
             if len(self.domains)==0:
+                print('Assigning from fixed charges. Domains not required!')
                 self._cutoffs = []
             else:
                 self._cutoffs = gp_minimize(self.evaluate,self.domains)
@@ -160,7 +173,7 @@ class ChargeAssign(object):
         n_nonbal = 0
         for s_ori,prop in zip(self._pool,self.site_properties):
             try:
-                s_assigned = assign_single(s_ori,prop,cutoffs,self.vspecies)
+                s_assigned = assign_single(s_ori,prop,cutoffs,self.v_species)
             except:
                 s_assigned = None 
             if s_assigned is None or s_assigned.charge != 0:
@@ -173,10 +186,12 @@ class ChargeAssign(object):
             self._assigned_structures = []
             for struct,prop in zip(self._pool,self.site_properties):
                 try:
-                    assigned_struct = assign_single(struct,prop,self.cutoffs,self.vspecies)
+                    assigned_struct = assign_single(struct,prop,self.cutoffs,self.v_species)
                     if assigned_struct.charge !=0:
+                        print('A structure not charge balanced. Dropping.')
                         assigned_struct = None
                 except:
+                    print('A structure failed assignment. Skipping.')
                     assigned_struct = None
                 self._assigned_structures.append(assigned_struct)
         return self._assigned_structures
@@ -186,10 +201,12 @@ class ChargeAssign(object):
         assigned_pool = [] 
         for struct,prop in zip(another_pool,another_props):
             try:
-                assigned = assign_single(struct,prop,self.cutoffs,self.vspecies) 
+                assigned = assign_single(struct,prop,self.cutoffs,self.v_species) 
                 if assigned.charge!=0:
+                    print('A structure extension failed charge balance.')
                     assigned = None      
             except:
+                print('A structure extension failed assignment.')
                 assigned = None
             assigned_pool.append(assigned)
         return assigned_pool

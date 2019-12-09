@@ -463,6 +463,7 @@ class ClusterExpansion(object):
         elif self.sm_type == 'an_frame':
             prim_an_sites = [site for site in self.structure if Is_Anion_Site(site)]
             prim_an = Structure.from_sites(prim_an_sites)
+
             s_an_fracs = []
             s_an_sps = []
             latt = structure.lattice
@@ -470,10 +471,14 @@ class ClusterExpansion(object):
                 if Is_Anion_Site(site):
                     s_an_fracs.append(site.frac_coords)
                     s_an_sps.append(site.specie)
-            scaling = (len(s_an_sps)/(structure.volume/self.structure.volume))**(1/3.0)
-            s_an_latt = Lattice.from_lengths_and_angles([latt.a * scaling, latt.b * scaling, latt.c * scaling],\
-                                                        [latt.alpha, latt.beta, latt.gamma])
+
+            scaling = ((len(s_an_sps)/len(prim_an))/(structure.volume/self.structure.volume))**(1/3.0)
+            s_an_latt = Lattice.from_parameters(latt.a * scaling, latt.b * scaling, latt.c * scaling, \
+                                                        latt.alpha, latt.beta, latt.gamma)
             structure_an = Structure(s_an_latt,s_an_sps,s_an_fracs,to_unit_cell =False, coords_are_cartesian=False)
+            #print('Structure_an:',structure_an)
+            #print('Prim_an:',prim_an)
+
             sc_matrix = self.sm.get_supercell_matrix(structure_an, prim_an)
         else:
             raise ValueError("Structure Matcher type not implemented!")

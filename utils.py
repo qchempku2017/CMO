@@ -133,7 +133,7 @@ def Reversed(pair):
         
 def Is_Anion_Site(site):
     for sp in site.species.keys():
-        if GetIonChg(sp)<0:
+        if GetIonChg(str(sp))<0: #This is a pymatgen specie object, not directly treated as string!
             return True
     return False
 

@@ -7,7 +7,7 @@ Domains_dict = \
             4:(2.5,3.3),
             3:(3.7,4.1),
             2:(4.5,5.0),
-        } #More elements yet to come!
+        } #More elements yet to come! Gimme more data or exp!
 
     },
     'chg':
@@ -20,7 +20,7 @@ Fix_Charges_dict = \
 {
     'F':-1,
     'Cl':-1,
-    'O':-2,
+    'O':-2,     #Currently fixed
     'S':-2,
     'N':-3,
     'C':-4,
