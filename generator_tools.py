@@ -118,7 +118,7 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
                 if RO_old_string not in calculated_structures:
                     calculated_structures[RO_old_string]=[]
                 calculated_structures[RO_old_string].append(Poscar.from_file(os.path.join(root,'POSCAR')).structure)
-                struct_id = int(root.split(os.sep[-1]))
+                # struct_id = int(root.split(os.sep)[-1])
     else: 
         print("No previous calculations, generating the initial pool.")
  
@@ -160,7 +160,7 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
         # You may want to change the number of MC flips for each temperature
 
         init_occu = clusSC.occu_from_structure(randStr)
-        print("Starting occupation:", init_occu)
+        #print("Starting occupation:", init_occu)
         sa_occu = simulated_anneal(ecis=ecis, cluster_supercell=clusSC, occu=init_occu, ind_groups=indGrps,
                                    n_loops=20000, init_T=5100, final_T=100, n_steps=20)
         print("MC ground state acquired, analyzing composition.")
@@ -263,23 +263,50 @@ def _write_mc_structs(unique_structs,ro_axis_strings,outdir='vasp_run'):
     if not os.path.isdir(outdir):
         os.mkdir(outdir)
         print(outdir,' does not exist. Created.')
+        load_old = False
+    else:
+        print('Old calculations found. Appending to old calculations.')
+        load_old = True
 
-    calculated_max_ids = {}
-    if os.path.isdir(outdir):
+    old_str_max_ids = {}
+    old_ro_ids = {}
+    if load_old:
         for root,dirs,files in os.walk(outdir):
             if _was_generated(files):
                 parentdir = os.path.join(*root.split(os.sep)[0:-1])
                 with open(os.path.join(parentdir,'composition_by_site')) as RO_file:
                     RO_old = json.load(RO_file)
                     RO_old_string = json.dumps(RO_old)
-                if RO_old_string not in calculated_max_ids:
-                    calculated_max_ids[RO_old_string]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
- 
-    RO_id = 0
+                if RO_old_string not in old_str_max_ids:
+                    old_str_max_ids[RO_old_string]=max([int(idx) for idx in os.listdir(parentdir) if RepresentsInt(idx)])
+
+        import re
+
+        for dirname in os.listdir(outdir):
+            with open(os.path.join(dirname,'composition_by_site')) as RO_file:
+                RO_old = json.load(RO_file)
+                RO_old_string = json.dumps(RO_old)
+            ro_id = int(re.search(r'\d+', dirname).group())
+            if RO_old_string not in old_ro_ids:
+                old_ro_ids[RO_old_string]=ro_id
+
+        old_max_RO_id = max(list(old_ro_ids.values()))    
+
+    else:
+        old_max_RO_id = 0
+    
+    new_RO_id = 0
     for RO_string,structs in unique_structs.items():
-        RODir = 'Composition{}'.format(RO_id)
+        if RO_string in old_ro_ids:
+            RODir = 'Composition{}'.format(old_ro_ids[RO_string])
+        else:
+            RODir = 'Composition{}'.format(new_RO_id+old_max_RO_id+1)
+            old_ro_ids[RO_string]=new_RO_id+old_max_RO_id+1
+            new_RO_id +=1
+
         compPathDir = os.path.join(outdir,RODir)
         if not os.path.isdir(compPathDir): os.mkdir(compPathDir)
+
         occu_file_path = os.path.join(compPathDir,'composition_by_site')
         if not os.path.isfile(occu_file_path):
             with open(occu_file_path,'w') as occufile:
@@ -290,14 +317,13 @@ def _write_mc_structs(unique_structs,ro_axis_strings,outdir='vasp_run'):
                 with open(axis_file_path,'w') as axisfile:
                     axisfile.write(ro_axis_strings[RO_string])
         for i, struct in enumerate(structs):
-            if RO_string in calculated_max_ids:
-                structDir = os.path.join(compPathDir,str(i+calculated_max_ids[RO_string]+1))
+            if RO_string in old_str_max_ids:
+                structDir = os.path.join(compPathDir,str(i+old_str_max_ids[RO_string]+1))
             else:
                 structDir = os.path.join(compPathDir,str(i))
 
             if not os.path.isdir(structDir): os.mkdir(structDir)
             Poscar(struct.get_sorted_structure()).write_file(os.path.join(structDir,'POSCAR'))
-        RO_id += 1
     print('Saving of %s successful.'%outdir)
 
 def _gen_vasp_inputs(SearchDir='vasp_run',functional='PBE', num_kpoints=25,add_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
@@ -504,7 +530,8 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
     return SCLst
 
 class StructureGenerator(MSONable):
-    def __init__(self,prim_file='prim.cif', outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64,\
+    def __init__(self,prim_file='prim.cif', merge_sublats = None, an_sublats = None,\
+                 outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64,\
                  sc_selec_enum = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson'):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
@@ -513,28 +540,60 @@ class StructureGenerator(MSONable):
               structures, they can be swapped between O and T without breaking conservation of composition, but in our program this kind of flipping 
               will not be allowed. If you want to consider Li+ distribution over O and T, you should enumerate Li+ on O sublattice and T sublattice 
               independently.
+
+        merge_sublats: if not none, should be a list of lists, in which each list stands for the site indices in prim that are going to be considered
+              a same sublattice. The indices should be 0-based. If none, each site in prim will be considered an independent sublattice.
+              If sites are considered a same sublattice, in the MC enumeration, they will be of the same index group to swap atoms in between.
+              Atoms will not be swapped to outside of the ind group
+
+        an_sublats: a list specifying which sites are considered anion sites, for the convenience of anion_framework matcher. If None, CEAuto will
+              distinguish on its own, but it can't tell whether a vacancy is on an_site or ca_site. So if you have anion vacancies, this is hightly
+              recommended.
+              This should be a list of indices. If merge_sublats is None, then they are directly the indices of anion sites within prim, otherwise 
+              they stand for the indices of the sublattice group in merge_sublats.
+
         outdir: output directory. Recommended == vasp_dir
-        enforced_occu: This specifies the lowest total occupation ratio of a sublattice. In the form of: [0.0,1.0,1.0,1.0], which means site #2,3,4 
-              must be fully occupied while site 1 has no special constraint.
+
+        enforced_occu: This specifies the lowest total occupation ratio of a sublattice. In the form of: [0.0,1.0,1.0,1.0], which means sublattice 
+              #2,3,4 must be fully occupied while site 1 has no special constraint. Similarly, if merge_sublats is not None, these terms are 
+              minimum allowed occupation on each sublattice group; otherwise they are site restrictions.
+
         sample_step: Enumeration step of species on sublattices. sample_step = 2 means that 2 atoms will be changed at each step during occupation 
               enumeration.
+
         max_sc_size: Maximum supercell size to enumerate, in determinant of supercell. 
+
         sc_selec_enum: Number of skewed and unskewed supercells to randomly select from enumeration.
+
         comp_axis: We provide a fucntion here to transform an occupation representation into composition in compound ratio, for your convedience to 
-              drawing phase diagrams. By default the composition is not decomposed since your systems can oftenly get too complexed. The occupation
-              will be stored in CEfile and also under all subdirectories of calculations.
-              Form of an occupation to store: [{'Li+':2,'Co3+':2,'Co4+':6,'Vac':6},{'O2-':16}]
+              drawing phase diagrams. By default the composition will not be decomposed to avoid over-complication. The occupation will be stored 
+              in Calcdata file and also under all the subdirectories of calculations.
+              Example of a stored occupation dict to store: [{'Li+':2,'Co3+':2,'Co4+':6,'Vac':6},{'O2-':16}]
+              if decomposed, generates a new axis dict, for example: {'CaO':0.5,'MgO':0.5}
+
         transmat: Sometimes your primitive cell is not symmetric enough, just like the case in the 2-site rhombohedral primitive cell of rock salt.
-              You can apply a transformation before shape enumeration.
-        ce_file: the file that contains a full record of the current cluster expansion work, including ce.as_dict, structures, ecis, etc.
-        vasp_settings: setting parameters for vasp calcs. Is in dictionary form. Keys are 'functional','num_kpoints','additional_vasp_settings'(in dictionary form), 'strain'(in matrix or list form)
+              You can apply a transformation before doing enumeration over supercells.
+
+        ce_file: the file that contains a full record of the current cluster expansion work, is the output of ECIGenerator.as_dict()
+
+        vasp_settings: setting parameters for vasp calcs. Is in dictionary form. Keys are 'functional','num_kpoints','additional_vasp_settings'
+              (in dictionary form), 'strain'(in matrix or list form). If not given, will use default settings in MITRelaxset.
         """
+
         if os.path.isfile(prim_file):
             self.prim = CifParser(prim_file).get_structures()[0]
         else:
             raise ValueError("Primitive cell file can not be found, stopping!")
 
-        if enforced_occu:
+        if merge_sublats is not None:
+            print("Sublattice merge rules already set!")
+        self.merge_sublats = merge_sublats
+
+        if an_sublats is not None:
+            print('Anion sites specified!')
+        self.an_sublats = an_sublats
+
+        if enforced_occu is not None:
             print("Occupation on each site at least:",enforced_occu)
         self.enforced_occu = enforced_occu
         self.sample_step=sample_step
@@ -562,11 +621,12 @@ class StructureGenerator(MSONable):
 
         self.outdir =  outdir
         self._pool = []
-        if os.path.isdir(outdir):
-            for root,dirs,files in os.walk(outdir):
-                if _was_generated(files):
-                    self._pool.append(Poscar.from_file(os.path.join(root,'POSCAR').structure))
-        
+        if os.path.isfile('pool.mson'):
+            with open('pool.mson') as pool_file:
+                old_pool_d = json.load(pool_file)
+            for struct_d in old_pool_d:
+                self._pool.append(Structure.from_dict(struct_d))       
+
         self.vasp_file = vasp_settings
         if os.path.isfile(vasp_settings):
             print("Applying VASP settings in {}.".format(vasp_settings))
@@ -640,6 +700,9 @@ class StructureGenerator(MSONable):
         self._write_vasp_inputs()
         os.rename('pool.temp','pool.old')        
         os.rename('ro_axis.temp','ro_axis.old')
+        
+        with open('pool.mson','w') as pool_file:
+            json.dump(self._pool,pool_file)
 
     def _write_vasp_inputs(self):
         if self.vasp_settings:

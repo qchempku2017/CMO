@@ -341,6 +341,10 @@ class CalcAnalyzer(object):
     
                 new_unassigned_strs.append((compstring,root,new_entry))
         
+        if len(new_unassigned_strs)==0:
+            print('No new structures appeared. Calcdata will not be updated.')
+            return
+
         #Charge assignment
         if self.is_charged_ce:
             relaxed_deformed_pool = []
@@ -484,7 +488,7 @@ class CalcAnalyzer(object):
         if 'weight' in settings: weight = settings['weight'];
         else: weight = 'unweighted'
  
-        if 'assign_algo' in setting: assign_algo = settings['assign_algo']
+        if 'assign_algo' in settings: assign_algo = settings['assign_algo']
         else: assign_algo = 'mag'
 
         return cls(vaspdir=vaspdir,prim_file=prim_file,calc_data_file=calc_data_file,ce_file = ce_file, ce_radius=ce_radius,\

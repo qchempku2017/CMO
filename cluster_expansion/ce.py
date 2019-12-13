@@ -476,6 +476,7 @@ class ClusterExpansion(object):
             s_an_latt = Lattice.from_parameters(latt.a * scaling, latt.b * scaling, latt.c * scaling, \
                                                         latt.alpha, latt.beta, latt.gamma)
             structure_an = Structure(s_an_latt,s_an_sps,s_an_fracs,to_unit_cell =False, coords_are_cartesian=False)
+            #print('Structure:',structure)
             #print('Structure_an:',structure_an)
             #print('Prim_an:',prim_an)
 
