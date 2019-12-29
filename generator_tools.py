@@ -49,6 +49,7 @@ def _is_proper_sc(sc,prim):
         return True
     else:
         return False
+    #Mat can't be too skewed or too prolonged!
 
 def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
     '''
