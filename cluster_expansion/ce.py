@@ -291,7 +291,8 @@ class ClusterExpansion(object):
     auto-generate the symmetrized clusters, unless you want more control over them.
     """
 
-    def __init__(self, structure, expansion_structure, symops, clusters, sm_type='pmg_sm', ltol=0.2, stol=0.1, angle_tol=5,
+    def __init__(self, structure, expansion_structure, symops, clusters, \
+                 sm_type='pmg_sm', ltol=0.2, stol=0.1, angle_tol=5,\
                  supercell_size='volume', use_ewald=False, use_inv_r=False, eta=None, basis = '01'):
         """
             Args:
@@ -385,7 +386,8 @@ class ClusterExpansion(object):
 
 
     @classmethod
-    def from_radii(cls, structure, radii, sm_type = 'pmg_sm', ltol=0.2, stol=0.1, angle_tol=5,\
+    def from_radii(cls, structure, radii,\
+                   sm_type = 'pmg_sm', ltol=0.2, stol=0.1, angle_tol=5,\
                    supercell_size='volume',use_ewald=False, use_inv_r=False, eta=None, basis = '01'):
         """
         Args:
@@ -413,9 +415,10 @@ class ClusterExpansion(object):
                             or len(site.species) > 1]
         expansion_structure = Structure.from_sites(sites_to_expand)
         clusters = cls._clusters_from_radii(expansion_structure, radii, symops)
-        return cls(structure=structure, expansion_structure=expansion_structure, symops=symops, sm_type = sm_type, \
-                   clusters=clusters,ltol=ltol, stol=stol, angle_tol=angle_tol,\
-                   supercell_size=supercell_size, use_ewald=use_ewald, use_inv_r=use_inv_r,eta=eta, basis=basis)
+        return cls(structure=structure, expansion_structure=expansion_structure, symops=symops, \
+                   sm_type = sm_type, ltol=ltol, stol=stol, angle_tol=angle_tol,\
+                   clusters=clusters, supercell_size=supercell_size, use_ewald=use_ewald, \
+                   use_inv_r=use_inv_r,eta=eta, basis=basis)
 
     @classmethod
     def _clusters_from_radii(cls, expansion_structure, radii, symops):
@@ -462,6 +465,8 @@ class ClusterExpansion(object):
             sc_matrix = self.sm.get_supercell_matrix(structure, self.structure)
         elif self.sm_type == 'an_frame':
             prim_an_sites = [site for site in self.structure if Is_Anion_Site(site)]
+
+
             prim_an = Structure.from_sites(prim_an_sites)
 
             s_an_fracs = []

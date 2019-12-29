@@ -41,7 +41,7 @@ class CEJob(object):
         Runner is the pivot. Still looking at it. Using old stuff as alternative.
     """
     def __init__(self,\
-                 n_sc_select=10,transmat=None,compaxis=None,enforced_occu=None,\
+                 n_sc_select=10,transmat=None,compaxis=None,merge_sublats=None,max_vacs=None,\
                  sample_step=1,vasp_settings='vasp_settings.mson',max_sc_size=64,\
 
                  ce_radius=None,max_de=100,max_ew=3,sm_type='pmg_sm',ltol=0.2,\
@@ -55,42 +55,60 @@ class CEJob(object):
                  postcommand="", checking_interval = 120\
                  ):
         """
-            All parameters are optional, but be careful with enforced_occu, and I highly recommend you to set this up!
+            All parameters are optional, but be careful with max_vacs, and I highly recommend you to set this up!
             Also, you'd better set up the vaspcommand option manually.
 
             1st row: generator options. Settings for vasp should be written in another file: vasp_settings.mson
-              n_sc_select: How many skewed and unskewed supercells to select from enumeration.
-              transmat: Transformation matrix applied to construct a more symmetric prim cell. Recommended when system can have better symmetry. For 
-                        example, in disordered rock-salt's 2-site prim cell, you can use [[1,1,0],[1,0,1],[0,1,1]]
-              compaxis: The composition axis to project your chemical formula(Li0.1CoO2 -> 0.05Li2O + 1CoO2, then compaxis=['Li2O','CoO2']). 
-                        If none, will not do projection;
-              enforced_occu: Minimum occupation fraction on each site, in dictionary. For example, in disordered rock-salt, if you have no constraints 
-                            on cation sites while prohibiting anion vacancies, you should use: [0.0,1.0];
-              sampling_step: For each sublattice, we will flip sampling_step number of sites into another specie each step of enumeration;
-              vasp_settings: File name that contains vasp_setting.
-              max_sc_size: maimum enumerated supercell size each cell.
+              n_sc_select: 
+                  How many skewed and unskewed supercells to select from enumeration.
+              transmat: 
+                  Transformation matrix applied to construct a more symmetric prim cell. Recommended when system can have better symmetry. For 
+                  example, in disordered rock-salt's 2-site prim cell, you can use [[1,1,0],[1,0,1],[0,1,1]]
+              compaxis: 
+                  The composition axis to project your chemical formula(Li0.1CoO2 -> 0.05Li2O + 1CoO2, then compaxis=['Li2O','CoO2']). 
+                  If none, will not do projection;
+              merge_sublats:
+                  Merging selected sites in primitive cell into sublattices. A list of lists.
+              max_vacs: 
+                  Maximum vacancy fraction on each sublattice, in list form. If merge_sublats = None, then each site in prim is an independent sublat.
+                  For example, in disordered rock-salt, if you have no constraints on cation sites while prohibiting anion vacancies, 
+                  you should use: [1.0,0.0];
+              sampling_step: 
+                  For each sublattice, we will flip (sampling_step) number of sites into another specie each step of enumeration;
+              vasp_settings: 
+                  File name that contains vasp_setting dictionary.
+              max_sc_size: 
+                  maimum enumerated supercell size each cell.
 
             2nd row: analyzer options.
-              ce_radius: cluster selection setting. In CEAuto all clusters within a diameter range are selected. For example, if ce_radius =
-                         {2:5.0, 3:4.0, 4:3.0}
-              max_de, max_ew: maximum dielectric and ewald term parameters, used to filter electrostatically unstable structures that ususally fail in 
-                              DFT calculation.
-              sm_type: structure matcher type. By default using pymatgen vanilla matcher, but anion framework is highly recommended;
-              ltol,stol,angle_tol: structure matcher parameters. See pymatgen documentations.
-              fit_solver: solver used in CE fitting. By default using an l1 regularized optimizer.
-              basis: basis used to computer cluster functions. By defualt, using delta basis (and this is the only supported one in cluster expansion.)
-              weight: weighting method used to improve fitting.
+              ce_radius: 
+                  cluster selection setting. In CEAuto all clusters within a diameter range are selected. For example, if ce_radius =
+                  {2:5.0, 3:4.0, 4:3.0}
+              max_de, max_ew: 
+                  maximum dielectric and ewald term parameters, used to filter electrostatically unstable structures that ususally fail in 
+                  DFT calculation.
+              sm_type: 
+                  structure matcher type. By default using pymatgen vanilla matcher, but anion framework is highly recommended;
+              ltol,stol,angle_tol: 
+                  structure matcher parameters. See pymatgen documentations.
+              fit_solver: 
+                  solver used in CE fitting. By default using an l1 regularized optimizer.
+              basis: 
+                  basis used to computer cluster functions. By defualt, using delta basis (and this is the only supported one in cluster expansion.)
+              weight: 
+                  weighting method used to improve fitting.
 
-           3rd row:related files.
+           3rd row:related setting and data files used and written by CEAuto.
 
            4th row:commands used in the runner.
-                   checking_interval: time interval to do a check to the queue status. If all submissions are finished, go to next step. 
-                                      Otherwise continue to wait.
+               checking_interval: 
+                   time interval between two checks of the computer queue status. If all submissions are finished, go to next step. Otherwise continue waiting.
         """
         self.n_sc_select = n_sc_select  
         self.transmat = transmat        
-        self.compaxis = compaxis        
-        self.enforced_occu = enforced_occu
+        self.compaxis = compaxis
+        self.merge_sublats = merge_sublats        
+        self.max_vacs = max_vacs
         self.sample_step = sample_step
         self.vasp_settings = vasp_settings
         self.max_sc_size = max_sc_size
@@ -216,8 +234,9 @@ class CEJob(object):
             gen = StructureGenerator.from_settings(setting_file=self.gen_file)
         else:
             gen = StructureGenerator(prim_file = self.prim_file,\
+                                     merge_sublats = self.merge_sublats,\
                                      outdir = self.run_dir,\
-                                     enforced_occu = self.enforced_occu,\
+                                     max_vacs = self.max_vacs,\
                                      sample_step=self.sample_step,\
                                      max_sc_size = self.max_sc_size,\
                                      sc_selec_enum=self.n_sc_select,\
@@ -349,8 +368,9 @@ class CEJob(object):
     def from_dict(cls,d):
         n_sc_select=d['n_sc_select'] if 'n_sc_select' in d else 10
         transmat=d['transmat'] if 'transmat' in d else None
-        compaxis=d['compaxis'] if 'compaxis' in d else None       
-        enforced_occu=d['enforced_occu'] if 'enforced_occu' in d else None
+        compaxis=d['compaxis'] if 'compaxis' in d else None
+        merge_sublats = d['merge_sublats'] if 'merge_sublats' in d else None       
+        max_vacs=d['max_vacs'] if 'max_vacs' in d else None
         sample_step=d['sample_step'] if 'sample_step' in d else 1
         vasp_settings=d['vasp_settings'] if 'vasp_settings'in d else 'vasp_settings.mson'
         max_sc_size=d['max_sc_size'] if 'max_sc_size' in d else 64
@@ -385,7 +405,8 @@ class CEJob(object):
         return cls(n_sc_select=n_sc_select,\
                    transmat=transmat,\
                    compaxis=compaxis,\
-                   enforced_occu=enforced_occu,\
+                   merge_sublats = merge_sublats,\
+                   max_vacs = max_vacs,\
                    sample_step=sample_step,\
                    vasp_settings=vasp_settings,\
                    max_sc_size=max_sc_size,\
@@ -423,7 +444,8 @@ class CEJob(object):
         return {'n_sc_select':self.n_sc_select,\
                 'transmat':self.transmat,\
                 'compaxis':self.compaxis,\
-                'enforced_occu':self.enforced_occu,\
+                'merged_sublats':self.merged_sublats,\
+                'max_vacs':self.max_vacs,\
                 'sample_step':self.sample_step,\
                 'vasp_settings':self.vasp_settings,\
                 'max_sc_size':self.max_sc_size,\

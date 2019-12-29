@@ -41,14 +41,6 @@ from selector_tools import *
 ##################################
 ## Less general tools that are not cross refered by other modules
 ##################################
-def _get_ind_groups(Bits,Cations,Anions):
-    """
-    Define sublattices for monte carlo flips
-    """
-    i1 = [i for i, b in enumerate(Bits) if sorted(b) == sorted(Cations)];
-    i2 = [i for i, b in enumerate(Bits) if sorted(b) == sorted(Anions)];
-    return i1, i2;
-
 def _is_proper_sc(sc,prim):
     newmat = np.array(prim.lattice.matrix)@np.array(sc)
     latt = Lattice(newmat)
@@ -88,7 +80,7 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
 def _was_generated(x):
     return 'POSCAR' in x and not 'KPOINTS' in x and not 'INCAR' in x and not 'POTCAR' in x
 
-def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=None,outdir='vasp_run'):
+def _get_mc_structs(SCLst,CE,ecis,merge_sublats=None,TLst=[500, 1500, 10000],compaxis=None,outdir='vasp_run'):
     '''This function checks the previous calculation directories when called. If no previous calculations, it
        generates the intial pool. If there are previous calculations, add new sampled structures based on 
        structure selection rule.
@@ -96,7 +88,6 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
        ce_file: directory of CE Mson data file
        outdir: directory to write outputs
        SCLst: a list contaning enumerated SC's and RO pairs.
-       Prim: primitive cell read from cif file
        TLst: temprature list to do MC enumeration on
        useX: a list of compounds of which we may want to calculate component.
        compaxis: a list of compound names. If specified, the program will caculate the composition in compound ratio,
@@ -104,6 +95,7 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
                 rocksalt systems.
     '''
     print('#### MC Initialization ####')
+    Prim = CE.structure
     print('SM type:',CE.sm_type)
     calculated_structures = {}
 
@@ -127,7 +119,15 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
         ro_axis_strings = {}
 
     sc_ro_pair_id = 0
-    for SC,RO,sites_WorthToExpand in SCLst:
+
+    if merge_sublats is None:
+        sublat_list = [[i] for i in range(len(Prim))]
+    else:
+        sublat_list = merge_sublats
+
+    for SC,RO,sublats_WorthToExpand in SCLst:
+        #len(RO)==len(sublats_WorthToExpand)==len(merge_sublats) if merge_sublats else ==len(SC)
+
         print("Processing composition:\n",RO,'\nSupercell:\n',SC,'\nsize:\n',int(round(np.abs(np.linalg.det(SC)))))
         clusSC=CE.supercell_from_matrix(SC);
 
@@ -136,16 +136,24 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
         # generate a list of groups of sites to swap between! We have known which sites are partially occupied,
         # so we only need to figure out how pymatgen make a group of supercell sites from a primitive cell site.
         # Looks like it simply just replicate sites one by one! 
-        indGrps=[list(range(i*scs,(i+1)*scs)) for i in range(len(RO)) if sites_WorthToExpand[i]];
-        #Note: indGrps should be generated from a clusSC supercell!!!!!
+        # indGrps=[list(range(i*scs,(i+1)*scs)) for i in range(len(RO)) if sites_WorthToExpand[i]];
 
+        indGrps = [list(range(i*scs*len(sublat),(i+1)*scs*len(sublat))) for i,sublat in enumerate(sublat_list)\
+                  if sublats_WorthToExpand[i]]
+
+        RO_int = [{specie:int(round(RO[i][specie]*scs*len(sublat))) for specie in RO[i]} for i,sublat in enumerate(sublat_list)]
+        #species will now be swapped within a 'sublattice', instead of the replicates of a site.
+
+        #Note: indGrps should be generated from a clusSC supercell!!!!!
         #print('indGrps',indGrps,'RO',RO)         
 
         # Replace species according to RO
         randSites = []
-        for i,site in enumerate(Prim):
-             randSite = PeriodicSite(RO[i],site.frac_coords,Prim.lattice,properties=site.properties)
-             randSites.append(randSite)
+        for i,sublat in enumerate(sublat_list):
+            for s_id in sublat:
+                site = Prim[s_id] 
+                randSite = PeriodicSite(RO[i],site.frac_coords,Prim.lattice,properties=site.properties)
+                randSites.append(randSite)
         randStr = Structure.from_sites(randSites)
             
         # Get electrostatics enumeration guess
@@ -164,17 +172,16 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
         sa_occu = simulated_anneal(ecis=ecis, cluster_supercell=clusSC, occu=init_occu, ind_groups=indGrps,
                                    n_loops=20000, init_T=5100, final_T=100, n_steps=20)
         print("MC ground state acquired, analyzing composition.")
-        # Integrate Wenxuan's solver here, and abandon MC annealing. (In the future.)#
-        RO_int = [{specie:int(round(site[specie]*scs)) for specie in site} for site in RO]
+        
         # Axis decomposition
         if compaxis:
-            axis = _axis_decompose(compaxis,RO_int,scs)
+            axis = _axis_decompose(compaxis,RO_int)
         #convert frac occupation back to integers.
         sp_list = []
-        for site_occu in RO_int:
-            sp_list.extend(site_occu.values())
+        for sublat_occu in RO_int:
+            sp_list.extend(sublat_occu.values())
         _gcd = GCD_List(sp_list)
-        RO_reduced_int=[{sp:site_occu[sp]//_gcd for sp in site_occu} for site_occu in RO_int]
+        RO_reduced_int=[{sp:sublat_occu[sp]//_gcd for sp in sublat_occu} for sublat_occu in RO_int]
 
         #Reduce occupation numbers by GCD.
         RO_string = json.dumps(RO_reduced_int)
@@ -219,7 +226,7 @@ def _get_mc_structs(SCLst,CE,ecis,Prim=None,TLst=[500, 1500, 10000],compaxis=Non
 
         sc_ro_pair_id += 1
 
-    # Deduplicate - first versus previously calculated structures, then versus structures within this run
+    # Deduplicate - first compared to previously calculated structures, then compared to structures within this run
     print('Deduplicating random structures.')
 
     unique_structs = {}
@@ -389,15 +396,15 @@ def _generate_axis_ref(compounds):
 
     return compSpecieNums, compUniqSpecies, uniqSpecieComps
 
-def _axis_decompose(compounds, occu, sc_size):
+def _axis_decompose(compounds, occu):
     #print("Axis decompose")
     compSpecieNums, compUniqSpecies,uniqSpecieComps = _generate_axis_ref(compounds)
     occuComposition=collections.Counter()
     #These two counters are used to prevent unreasonably generated occupations that cannot be matched with any compound.
     specieStat_from_Occu=collections.Counter()
     specieStat_from_Compounds=collections.Counter()
-
-    for s,site in enumerate(occu):
+    
+    for s,sublat in enumerate(occu):
         #print(occu)
         for specie in occu[s]:
             if specie in uniqSpecieComps:
@@ -407,9 +414,9 @@ def _axis_decompose(compounds, occu, sc_size):
     for compound in occuComposition:
         for specie in compSpecieNums[compound]:
             specieStat_from_Compounds[specie]+=compSpecieNums[compound][specie]*occuComposition[compound]
-    for site in occu:
-        for specie in site:
-            specieStat_from_Occu[specie]+=site[specie]
+    for sublat in occu:
+        for specie in sublat:
+            specieStat_from_Occu[specie]+=sublat[specie]
     
     #print(specieStat_from_Occu,specieStat_from_Compounds)
     specieNumMatch = True
@@ -427,16 +434,15 @@ def _axis_decompose(compounds, occu, sc_size):
     axis = {compound:occuComposition[compound]/tot_mol for compound in occuComposition}
     return axis
 
-def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercellnum=10,\
-                           transmat=[[1,0,0],[0,1,0],[0,0,1]]):
+def _supercells_from_occus(maxSize,prim,maxVacs=None,sampleStep=1,supercellnum=10,\
+                           transmat=[[1,0,0],[0,1,0],[0,0,1]],merge_sublats=None):
     #Warning: Currently assumes a specie only occupies one site.
     '''
     Inputs:
         maxSize: determinant of supercell matrix that is to be enumerated
         prim: primitive cell data. Generated by pymatgen.io.cif.CifParser(). Initially a pure compound, for 
                   instance, LiNiO2 in /Examples
-        enforceOccu: Sometimes you want a sublattice to be always fully occupied or at least half occupied. Use this 
-                     parameter and input a dict, such as {'Li+':0.333,...}.
+        maxVacs: maximum vacancy percentage on a site. This is a list, with len(maxVacs)==len(sublat_list)
         sampleStep: Sometimes you don't want to change site occupation one by one. Like, if you have 24 A sites, you 
                    wanna sample every 6 Li+ occupation so you will have less possibility to handle with and less 
                    memory consumption. We recommend you use common factor(gcd) of 'nSites', or charge balance may
@@ -452,86 +458,105 @@ def _supercells_from_occus(maxSize,prim,enforceOccu=None,sampleStep=1,supercelln
     specieChgDict={}
     
     occuDicts = []
-    for site in prim:
-        siteSpecies = site.species_string.split(',')
-        #print('siteSpecies',siteSpecies)
-        if len(siteSpecies)>1 or (':' in siteSpecies[0]):
-            siteOccu = dict([[s.strip() for s in specieoccu.split(':')] for specieoccu in siteSpecies])
-        else:
-            siteOccu = {siteSpecies[0].strip():1.00}
-        #print(siteOccu)
-        siteOccuMod = {}
-        for specie in siteOccu:
-            specieMod = Modify_Specie(specie)
-            if specieMod not in specieChgDict: specieChgDict[specieMod]=GetIonChg(specieMod)
-            siteOccuMod[specieMod]=float(siteOccu[specie])
-        occuDicts.append(siteOccuMod)
+    if merge_sublats is None:
+        sublat_list = [[i] for i in range(len(prim))]
+    else:
+        sublat_list = merge_sublats
+
+    for sublat in sublat_list:
+        sublat_sites_occu = []
+        for s_id in sublat:
+            siteSpecies = prim[s_id].species_string.split(',')
+            #print('siteSpecies',siteSpecies)
+            if len(siteSpecies)>1 or (':' in siteSpecies[0]):
+                siteOccu = dict([[s.strip() for s in specieoccu.split(':')] for specieoccu in siteSpecies])
+            else:
+                siteOccu = {siteSpecies[0].strip():1.00}
+            #print(siteOccu)
+            siteOccuMod = {}
+            for specie in siteOccu:
+                specieMod = Modify_Specie(specie)
+                if specieMod not in specieChgDict: specieChgDict[specieMod]=GetIonChg(specieMod)
+                siteOccuMod[specieMod]=float(siteOccu[specie])
+            sublat_sites_occu.append(siteOccuMod)
+
+        sublatOccu = {}
+        for siteOccu in sublat_sites_occu:
+            for specie in siteOccu:
+                if specie not in sublatOccu:
+                    sublatOccu[specie]=0.0
+                sublatOccu[specie]+=siteOccu[specie]/len(sublat_sites_occu)
+        occuDicts.append(sublatOccu)
+    #Now the occupation in written in sublattices form.
     #print("Occupation Enum:",occuDicts)
     
     print('#### Occupation enumeration ####')
     SCLst = []
     SC_sizes = [int(round(abs(np.linalg.det(SC)))) for SC in SCenum] 
 
-    # Enumeration by site, not by compounds' chemical formulas
-    # We will need to provide a site-by-site replacement method and abandon pymatgen replace_species
+    # Enumeration now by sublattices, not by compounds' chemical formulas
     for sc_id,sc in enumerate(SCenum):
         #print(sc,SC_sizes[sc_id])
-        poss_Occu_Sites = []
-        for s,site in enumerate(prim):
+        poss_Occu_Sublats = []
+        for sl_id,sublat in enumerate(sublat_list):
             poss_Sp_Nums = {}
             for specie in occuDicts[s]:  
-               poss_Sp_Nums[specie]=list(range(0,SC_sizes[sc_id]+1,sampleStep))
+               poss_Sp_Nums[specie]=list(range(0,SC_sizes[sc_id]*len(sublat)+1,sampleStep))
             keys,values = zip(*poss_Sp_Nums.items())
-            allOccu_for_Site = [dict(zip(keys,v)) for v in itertools.product(*values) if (((enforceOccu and\
-            sum(v)/SC_sizes[sc_id]+0.01>enforceOccu[s]) or (not enforceOccu)) and (sum(v)/SC_sizes[sc_id]\
-            -0.01<1.0))]
+            allOccu_for_Sublat = [dict(zip(keys,v)) for v in itertools.product(*values) if ((maxVacs is not None and\
+            float(sum(v))/(SC_sizes[sc_id]*len(sublat))>=1.0-maxVacs[sl_id]) or maxVacs is None) and \
+            float(sum(v))/(SC_sizes[sc_id]*len(sublat))<=1.0]
             #print(allOccu_for_Site)
-            poss_Occu_Sites.append(allOccu_for_Site)
+            poss_Occu_Sublats.append(allOccu_for_Sublat)
 
         #print(poss_Occu_Sites)
-        allOccu_for_Sites = [list(site_combo) for site_combo in itertools.product(*poss_Occu_Sites) \
+        allOccu_for_Sublats = [list(sublat_combo) for sublat_combo in itertools.product(*poss_Occu_Sublats) \
                              if Is_Neutral_Occu(site_combo,specieChgDict) ]
 
-        allFracOccu_for_Sites = []
+        allFracOccu_for_Sublats = []
         occus_WorthToExpand = []
 
-        for occu in allOccu_for_Sites:
+        for occu in allOccu_for_Sublats:
             #Check whether the generated composition is a fully occupied and pure compound, and avoid to do CE on that.
             #Also generate replacement table
-            sites_WorthToExpand = []
+            sublats_WorthToExpand = []
             fracOccu = []
-            for site_occu in occu:
-                fracOccu.append({specie:site_occu[specie]/SC_sizes[sc_id] for specie in site_occu})
+            for sl_id,sl_occu in enumerate(occu):
+                fracOccu.append({specie:float(sl_occu[specie])/(SC_sizes[sc_id]*len(sublat_list[sl_id])) \
+                                 for specie in site_occu})
             #print('fracOccu',fracOccu)
 
-            for site_fracoccu in fracOccu:
-                site_WorthToExpand = True
-                for specie in site_fracoccu:
-                    if abs(site_fracoccu[specie]-1.00)<0.001:
-                        site_WorthToExpand=False
+            for sublat_fracoccu in fracOccu:
+                sublat_WorthToExpand = True
+                for specie in sublat_fracoccu:
+                    if abs(sublat_fracoccu[specie]-1.00)<0.001:
+                        sublat_WorthToExpand=False
                         break
-                sites_WorthToExpand.append(site_WorthToExpand)
+                if sublat_WorthToExpand:
+                    sublat_WorthToExpand = (sum(list(sublat_fracoccu.values())) > 0.0)
+
+                sublats_WorthToExpand.append(sublat_WorthToExpand)
             #print(sites_WorthToExpand)
     
-            worthToExpand = reduce(lambda x,y:x or y,sites_WorthToExpand)
+            worthToExpand = reduce(lambda x,y:x or y,sublats_WorthToExpand)
                     
             #print('worthToExpand',worthToExpand)
             if worthToExpand:
-                allFracOccu_for_Sites.append(fracOccu)
+                allFracOccu_for_Sublats.append(fracOccu)
                 #print("allFracOccu_for_sites",allFracOccu_for_Sites)
-                occus_WorthToExpand.append(sites_WorthToExpand)
+                occus_WorthToExpand.append(sublats_WorthToExpand)
                 #We will no longer do axis decomposition here
                                                  
-        SCLst.extend(zip([sc]*len(allFracOccu_for_Sites),allFracOccu_for_Sites,occus_WorthToExpand))
+        SCLst.extend(zip([sc]*len(allFracOccu_for_Sublats),allFracOccu_for_Sublats,occus_WorthToExpand))
 
-        print('Generated %d compositions for supercell '%len(allFracOccu_for_Sites),sc,'.')
+        print('Generated %d compositions for supercell '%len(allFracOccu_for_Sublats),sc,'.')
 
     #print('SCLst',SCLst)
     return SCLst
 
 class StructureGenerator(MSONable):
-    def __init__(self,prim_file='prim.cif', merge_sublats = None, an_sublats = None,\
-                 outdir='vasp_run', enforced_occu = None, sample_step=1, max_sc_size = 64,\
+    def __init__(self,prim_file='prim.cif', merge_sublats = None, \
+                 outdir='vasp_run', max_vacs = None, sample_step=1, max_sc_size = 64,\
                  sc_selec_enum = 10, comp_axis=None, transmat=None,ce_file = 'ce.mson',vasp_settings='vasp_settings.mson'):
         """
         prim: The structure to build a cluster expasion on. In our current version, prim must be a pyabinitio.core.Structure object, and each site in p
@@ -546,29 +571,21 @@ class StructureGenerator(MSONable):
               If sites are considered a same sublattice, in the MC enumeration, they will be of the same index group to swap atoms in between.
               Atoms will not be swapped to outside of the ind group
 
-        an_sublats: a list specifying which sites are considered anion sites, for the convenience of anion_framework matcher. If None, CEAuto will
-              distinguish on its own, but it can't tell whether a vacancy is on an_site or ca_site. So if you have anion vacancies, this is hightly
-              recommended.
-              This should be a list of indices. If merge_sublats is None, then they are directly the indices of anion sites within prim, otherwise 
-              they stand for the indices of the sublattice group in merge_sublats.
-
         outdir: output directory. Recommended == vasp_dir
 
-        enforced_occu: This specifies the lowest total occupation ratio of a sublattice. In the form of: [0.0,1.0,1.0,1.0], which means sublattice 
-              #2,3,4 must be fully occupied while site 1 has no special constraint. Similarly, if merge_sublats is not None, these terms are 
-              minimum allowed occupation on each sublattice group; otherwise they are site restrictions.
 
         sample_step: Enumeration step of species on sublattices. sample_step = 2 means that 2 atoms will be changed at each step during occupation 
               enumeration.
 
-        max_sc_size: Maximum supercell size to enumerate, in determinant of supercell. 
+        max_sc_size: Maximum supercell size to enumerate,(volume of the supercell). 
 
         sc_selec_enum: Number of skewed and unskewed supercells to randomly select from enumeration.
 
         comp_axis: We provide a fucntion here to transform an occupation representation into composition in compound ratio, for your convedience to 
               drawing phase diagrams. By default the composition will not be decomposed to avoid over-complication. The occupation will be stored 
               in Calcdata file and also under all the subdirectories of calculations.
-              Example of a stored occupation dict to store: [{'Li+':2,'Co3+':2,'Co4+':6,'Vac':6},{'O2-':16}]
+              Example of a stored occupation dict to store: [{'Li+':2,'Co3+':2,'Co4+':6,'Vac':6},{'O2-':16}] each dict term is the occupation
+              of a subdirectory.
               if decomposed, generates a new axis dict, for example: {'CaO':0.5,'MgO':0.5}
 
         transmat: Sometimes your primitive cell is not symmetric enough, just like the case in the 2-site rhombohedral primitive cell of rock salt.
@@ -586,16 +603,17 @@ class StructureGenerator(MSONable):
             raise ValueError("Primitive cell file can not be found, stopping!")
 
         if merge_sublats is not None:
-            print("Sublattice merge rules already set!")
+            print("Merging the following sites into sublattices: {}".format(merge_sublats))
         self.merge_sublats = merge_sublats
 
-        if an_sublats is not None:
-            print('Anion sites specified!')
-        self.an_sublats = an_sublats
+#        if an_sublats is not None:
+#            print("Selecting the following sublattices as the anion framework: {}".format(an_sublats))
+#        self.an_sublats = an_sublats
 
-        if enforced_occu is not None:
-            print("Occupation on each site at least:",enforced_occu)
-        self.enforced_occu = enforced_occu
+        if max_vacs is not None:
+            print("Vacancies on each site are at most:",max_vacs)
+        self.max_vacs = max_vacs
+
         self.sample_step=sample_step
         self.max_sc_size=max_sc_size
         self.sc_selec_enum=sc_selec_enum
@@ -613,9 +631,11 @@ class StructureGenerator(MSONable):
 
         else:
             # No existing cluster expansion, we are building form start - use electrostatics only
+            # This CE object is a bogus one, containing only electrostatics.
             print("Not checking previous cluster expansion, using ewald as sampling criteria.")
-            self.ce=ClusterExpansion.from_radii(self.prim,{2: 1},ltol=0.3,stol=0.2,angle_tol=2,\
-                                       supercell_size='num_sites',use_ewald=True,use_inv_r=False,eta=None);
+            self.ce=ClusterExpansion.from_radii(self.prim,{2: 1}, ltol=0.3,stol=0.2,angle_tol=2,\
+                                       supercell_size='num_sites',use_ewald=True,use_inv_r=False,\
+                                       eta=None)
             #Here we use pmg_sm as structure matcher.
             self.ecis=np.zeros(self.ce.n_bit_orderings+1); self.ecis[-1]=1;
 
@@ -641,8 +661,9 @@ class StructureGenerator(MSONable):
     def sc_ro(self):
         # Enumerated supercells and compositions.
         if not self._sc_ro:
-            self._sc_ro =  _supercells_from_occus(self.max_sc_size, self.prim.get_sorted_structure(), self.enforced_occu,\
-                                        self.sample_step, self.sc_selec_enum, self.transmat)
+            self._sc_ro =  _supercells_from_occus(self.max_sc_size, self.prim, maxVacs=self.max_vacs,\
+                                        sampleStep=self.sample_step, supercellnum=self.sc_selec_enum, \
+                                        transmat=self.transmat,merge_sublats=self.merge_sublats)
         return self._sc_ro
     #Share the same set of sc_ro across project.
 
@@ -662,8 +683,9 @@ class StructureGenerator(MSONable):
                 _ro_axis_strings = json.load(temp_file)
         #
         else:
-            _unique_structs,_ro_axis_strings = _get_mc_structs(self.sc_ro,self.ce,self.ecis,Prim=self.prim,TLst=[500, 1500, 10000],\
-                            compaxis= self.comp_axis,outdir=self.outdir)
+            _unique_structs,_ro_axis_strings = _get_mc_structs(self.sc_ro,self.ce,self.ecis,merge_sublats=self.merge_sublats,\
+                                                               TLst=[500, 1500, 10000],\
+                                                               compaxis= self.comp_axis,outdir=self.outdir)
             with open('pool.temp','w') as temp_file:
                 _unique_structs_d = {comp:[struct.as_dict() for struct in _unique_structs[comp]] \
                                      for comp in _unique_structs}
@@ -743,8 +765,14 @@ class StructureGenerator(MSONable):
         if 'prim_file' in d: prim_file = d['prim_file'];
         else: prim_file = 'prim.cif'; 
 
-        if 'enforced_occu' in d: enforced_occu = d['enforced_occu'];
-        else: enforced_occu = None;
+        if 'merge_sublats' in d: merge_sublat = d['merge_sublats']
+        else: merge_sublats = None
+ 
+#        if 'an_sublats' in d: an_sublat = d['an_sublats']
+#        else: an_sublats = None
+
+        if 'max_vacs' in d: max_vacs = d['max_vacs'];
+        else: max_vacs = None;
 
         if 'comp_axis' in d: comp_axis = d['comp_axis'];
         else: comp_axis = None;
@@ -773,7 +801,9 @@ class StructureGenerator(MSONable):
         #if 'n_select' in d: n_select = d['n_select'];
         #else: n_select = 1;
         
-        generator = cls(prim_file=prim_file, enforced_occu=enforced_occu, comp_axis=comp_axis, sample_step=sample_step,\
+        generator = cls(prim_file=prim_file, merge_sublats = merge_sublats,\
+                        #an_sublats = an_sublats,\
+                        max_vacs=max_vacs, comp_axis=comp_axis, sample_step=sample_step,\
                         max_sc_size=max_sc_size, sc_selec_enum=sc_selec_enum, transmat=transmat, ce_file=ce_file,\
                         outdir=outdir, vasp_settings=vasp_settings)
 
@@ -783,7 +813,9 @@ class StructureGenerator(MSONable):
 
     def as_dict(self):
         return {'prim':self.prim.as_dict(),\
-                'enforced_occu':self.enforced_occu,\
+                'merge_sublats':self.merge_sublats,\
+                 #'an_sublats':self.an_sublats,\
+                'max_vacs':self.max_vacs,\
                 'comp_axis':self.comp_axis,\
                 'sample_step':self.sample_step,\
                 'max_sc_size':self.max_sc_size,\

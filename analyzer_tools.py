@@ -81,6 +81,13 @@ class CalcAnalyzer(object):
     def __init__(self, vaspdir='vasp_run', prim_file='prim.cif',calc_data_file='calcdata.mson',ce_file='ce.mson',ce_radius=None,\
                  max_de=100,max_ew=3, sm_type='pmg_sm', ltol=0.2, stol=0.15, angle_tol=5, solver='cvxopt_l1',\
                  basis='01',weight='unweighted',assign_algo='mag'):
+        """
+        an_sublats: a list specifying which sites are considered anion sites, for the convenience of anion_framework matcher. If None, CEAuto will
+              distinguish on its own, but it can't tell whether a vacancy is on an_site or ca_site. So if you have anion vacancies, this is hightly
+              recommended.
+              This should be a list of indices. If merge_sublats is None, then they are directly the indices of anion sites within prim, otherwise 
+              they stand for the indices of the sublattice group in merge_sublats.
+        """
         self.calcdata = {}
         self.vaspdir = vaspdir
         self.calc_data_file = calc_data_file
