@@ -501,7 +501,7 @@ def _supercells_from_occus(maxSize,prim,maxVacs=None,sampleStep=1,supercellnum=1
         poss_Occu_Sublats = []
         for sl_id,sublat in enumerate(sublat_list):
             poss_Sp_Nums = {}
-            for specie in occuDicts[s]:  
+            for specie in occuDicts[sl_id]:  
                poss_Sp_Nums[specie]=list(range(0,SC_sizes[sc_id]*len(sublat)+1,sampleStep))
             keys,values = zip(*poss_Sp_Nums.items())
             allOccu_for_Sublat = [dict(zip(keys,v)) for v in itertools.product(*values) if ((maxVacs is not None and\
@@ -512,7 +512,7 @@ def _supercells_from_occus(maxSize,prim,maxVacs=None,sampleStep=1,supercellnum=1
 
         #print(poss_Occu_Sites)
         allOccu_for_Sublats = [list(sublat_combo) for sublat_combo in itertools.product(*poss_Occu_Sublats) \
-                             if Is_Neutral_Occu(site_combo,specieChgDict) ]
+                             if Is_Neutral_Occu(sublat_combo,specieChgDict) ]
 
         allFracOccu_for_Sublats = []
         occus_WorthToExpand = []
@@ -524,7 +524,7 @@ def _supercells_from_occus(maxSize,prim,maxVacs=None,sampleStep=1,supercellnum=1
             fracOccu = []
             for sl_id,sl_occu in enumerate(occu):
                 fracOccu.append({specie:float(sl_occu[specie])/(SC_sizes[sc_id]*len(sublat_list[sl_id])) \
-                                 for specie in site_occu})
+                                 for specie in sl_occu})
             #print('fracOccu',fracOccu)
 
             for sublat_fracoccu in fracOccu:

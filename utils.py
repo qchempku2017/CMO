@@ -132,18 +132,18 @@ def Reversed(pair):
     return pair[::-1]
         
 def Is_Anion_Site(site):
-"""
-    This automatically detect whether this site should be an anion site. Only useful for elements that are almost always 
-    electro negative when they appear alone! A vacancy will not appear in a structure object and thus is not a site at all.
-    But it still can be mapped back to primitive cell, if the primitive cell object allows partial occupation <1, and you 
-    use ElementComparator().
-"""
+    """
+        This automatically detect whether this site should be an anion site. Only useful for elements that are almost always 
+        electro negative when they appear alone! A vacancy will not appear in a structure object and thus is not a site at all.
+        But it still can be mapped back to primitive cell, if the primitive cell object allows partial occupation <1, and you 
+        use ElementComparator().
+    """
     import re
     elneg_elements = ['F','Cl','Br','I','O','S','Se','N','P','C','H']
     for sp in site.species.keys():
         if GetIonChg(str(sp))<0: #This is a pymatgen specie object, not directly treated as string!
             return True
-        elif:
+        else:
             sp_element = re.sub(r'\d*(\+|\-)$','',str(sp))
             if sp_element in elneg_elements:
                 return True
