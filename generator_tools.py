@@ -27,6 +27,7 @@ from pymatgen.core.composition import Composition
 from pymatgen.core.sites import PeriodicSite
 from pymatgen.analysis.elasticity.strain import Deformation
 from pymatgen.core.lattice import Lattice
+from pymatgen.transformations.standard_transformations import OrderDisorderedStructureTransformation
 
 from itertools import permutations,product
 from operator import mul

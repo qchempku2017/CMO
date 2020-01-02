@@ -193,6 +193,7 @@ def write_vasp_inputs(Str,VASPDir,functional='PBE',num_kpoints=25,additional_vas
 def get_bit_inds(sc):
     """
         Generate maxsat variable indices.
+        sc: a supercell, of class Structure
     """
     bit_inds = []
     b_id = 1
@@ -202,6 +203,10 @@ def get_bit_inds(sc):
         #-1 since a specie on the site is taken as reference
             site_bit_inds.append(b_id)
             b_id+=1
+        if site.species.num_atoms<0.99:
+            site_bit_inds.append(b_id)
+            b_id+=1
+        #Vacancy is taken as the last specie
         bit_inds.append(site_bit_inds)
     return bit_inds
 
