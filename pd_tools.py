@@ -556,7 +556,7 @@ class TwoCompPDFinder(object):
                    format(T,min_mu,max_mu))
         return pbs
 
-    def extend_pb(self,pb_line,k=self.k, z_a = self.z_a): #Is this gramatically correct?
+    def extend_pb(self,pb_line,k=None, z_a = None): #Is this gramatically correct?
         """
         return pb point at higher beta. returns None if the pb line is dead.
         Here we are actually doing a much smaller line seach over mu,
@@ -566,6 +566,10 @@ class TwoCompPDFinder(object):
         this point.
         """
         kb = 8.617332e-5
+        if k is None:
+            k = self.k
+        if z_a is None:
+            z_a = self.z_a
 
         pb_end = pb_line[-1]
         last_T = pb_end[0]; last_mu = pb_end[1]; last_dpb = pb_end[4]
@@ -608,7 +612,7 @@ class TwoCompPDFinder(object):
             new_x_alpha = new_pb[2]
             new_x_gamma = new_pb[3]
             alpha_pred_alpha = detect_pt_from_series(old_x_alphas+[new_x_alpha],old_betas+[new_beta],\
-                               k=k,z_a=z_a) #May need to use separate k and z_a than MC convergence here
+                               k=k,z_a=z_a) 
             gamma_pred_gamma = detect_pt_from_series(old_x_gammas+[new_x_gamma],old_betas+[new_beta],\
                                k=k,z_a=z_a) 
             alpha_pred_gamma = detect_pt_from_series(old_x_alphas+[new_x_gamma],old_betas+[new_beta],\
