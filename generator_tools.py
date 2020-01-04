@@ -59,7 +59,7 @@ def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
     '''
     print('#### Supercell Enumeration ####')
     scs=[]
-    trans_size = int(abs(np.linalg.det(transmat))) if transmat else 1
+    trans_size = int(round(abs(np.linalg.det(transmat)))) if transmat else 1
 
     for det in range(int(maxDet/4),maxDet+1,int(maxDet/4)):
         scs.extend(Get_Hermite_Matricies(int(det/trans_size)))
@@ -726,7 +726,8 @@ class StructureGenerator(MSONable):
         os.rename('ro_axis.temp','ro_axis.old')
         
         with open('pool.mson','w') as pool_file:
-            json.dump(self._pool,pool_file)
+            pool_d = [struct.as_dict() for struct in self._pool]
+            json.dump(pool_d,pool_file)
 
     def _write_vasp_inputs(self):
         if self.vasp_settings:
@@ -767,7 +768,7 @@ class StructureGenerator(MSONable):
         if 'prim_file' in d: prim_file = d['prim_file'];
         else: prim_file = 'prim.cif'; 
 
-        if 'merge_sublats' in d: merge_sublat = d['merge_sublats']
+        if 'merge_sublats' in d: merge_sublats = d['merge_sublats']
         else: merge_sublats = None
  
 #        if 'an_sublats' in d: an_sublat = d['an_sublats']
