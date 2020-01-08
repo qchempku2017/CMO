@@ -178,6 +178,7 @@ class StructureSelector():
         """
 
         old_feature_matrix = self._get_femat(old_pool)
+        #print('Old pool finished')
         new_feature_matrix = self._get_femat(new_pool)
 
         d = old_feature_matrix.shape[1]

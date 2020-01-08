@@ -166,7 +166,7 @@ class EciGenerator(object):
                     m = self.ce.supercell_matrix_from_structure(s)
                 sc = self.ce.supercell_from_matrix(m)
                 if fm_row is None:
-                    fm_row = self.ce.corr_from_structure(s)
+                    fm_row = sc.corr_from_structure(s)
             except Exception:
                 print('Unable to match {} with energy {} to supercell'.format(s.composition, e))
                 logging.debug('Unable to match {} with energy {} to supercell'.format(s.composition, e))

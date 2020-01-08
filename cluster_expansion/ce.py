@@ -828,11 +828,12 @@ class ClusterSupercell(object):
 
         #print('sc:\n',self.supercell_matrix,\
         #      '\nstr:\n',self.cluster_expansion.supercell_matrix_from_structure(structure))
-        mapping = sm_no_sc.get_mapping(self.supercell, structure).tolist()
+        mapping = sm_no_sc.get_mapping(self.supercell, structure)
 
         if mapping is None:
-            raise ValueError('Structure cannot be mapped to this supercell')
+            raise ValueError('Structure cannot be mapped to this supercell. Structure:{}\nSupercell:{}'.format(structure,self.supercell))
 
+        mapping = mapping.tolist()
         #cs.supercell[mapping] = structure
         occu = np.zeros(len(self.supercell), dtype=np.int)
         for i, bit in enumerate(self.bits):

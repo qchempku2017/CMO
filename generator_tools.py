@@ -52,28 +52,24 @@ def _is_proper_sc(sc,prim):
         return False
     #Mat can't be too skewed or too prolonged!
 
-def _Enumerate_SC(maxDet,prim,nSk=1,nRect=1,transmat=None):
+def _Enumerate_SC(maxDet,prim,n_select=1,transmat=None):
     '''
-    Enumerate all possible supercell matrices and pick 10 random unskewd scs 
-    and 10 skewed scs from enumeration.
+    Enumerate all possible orthogonal supercell matrices. Abandon all skewed ones
+    to avoid numerical instability in structure matcher.
     '''
     print('#### Supercell Enumeration ####')
     scs=[]
     trans_size = int(round(abs(np.linalg.det(transmat)))) if transmat else 1
 
     for det in range(int(maxDet/4),maxDet+1,int(maxDet/4)):
-        scs.extend(Get_Hermite_Matricies(int(det/trans_size)))
+        scs.extend(Get_Diag_Matricies(int(det/trans_size)))
     print('Generated %d supercell matrices with max determinant %d'%(len(scs),maxDet))
-    #print('Supercell Matrices:\n',scs)
-    print('Removing highly skewd structures to ensure structure matcher operation.')
     scs = [sc for sc in scs if _is_proper_sc(sc,prim)]
-    print('Picking %d random skew supercells and %d random rectangular supercells.'%(nSk,nRect))
-    _is_diagonal = lambda sc: (sc[0][1]==0 and sc[0][2]==0 and sc[1][2]==0)
-    scs_sk = [sc for sc in scs if not _is_diagonal(sc)]
-    scs_re = [sc for sc in scs if _is_diagonal(sc)]
-    ns = nSk if nSk<=len(scs_sk) else len(scs_sk)
-    nr = nRect if nRect<=len(scs_re) else len(scs_re)
-    selected_scs = random.sample(scs_sk,ns)+random.sample(scs_re,nr)
+    print('Picking %d random rectangular supercells.'%(n_select))
+
+    ns = min(n_select,len(scs))
+
+    selected_scs = random.sample(scs,ns)
     #print("scs before trans:",selected_scs)
     if transmat:
         selected_scs=[mat_mul(sc,transmat) for sc in selected_scs]
@@ -455,7 +451,7 @@ def _supercells_from_occus(maxSize,prim,maxVacs=None,sampleStep=1,supercellnum=1
         The list returned will be a list of tuples in the form (SC,RO,comp) now.
     '''
     #Preparation steps
-    SCenum = _Enumerate_SC(maxSize,prim,supercellnum,supercellnum,transmat)
+    SCenum = _Enumerate_SC(maxSize,prim,supercellnum,transmat)
 
     specieChgDict={}
     
@@ -635,7 +631,7 @@ class StructureGenerator(MSONable):
             # No existing cluster expansion, we are building form start - use electrostatics only
             # This CE object is a bogus one, containing only electrostatics.
             print("Not checking previous cluster expansion, using ewald as sampling criteria.")
-            self.ce=ClusterExpansion.from_radii(self.prim,{2: 1}, ltol=0.3,stol=0.2,angle_tol=2,\
+            self.ce=ClusterExpansion.from_radii(self.prim,{2: 1}, ltol=0.2,stol=0.15,angle_tol=5,\
                                        supercell_size='num_sites',use_ewald=True,use_inv_r=False,\
                                        eta=None)
             #Here we use pmg_sm as structure matcher.
@@ -711,7 +707,8 @@ class StructureGenerator(MSONable):
             print("Updating CE with {} chosen structures.".format(n_add))
             selected_inds = ss.select_new(self._pool,_pool,n_probe=n_add)
 
-        self._pool = self._pool.extend([_pool[idx] for idx in selected_inds])
+        self._pool.extend([_pool[idx] for idx in selected_inds])
+        #print('self._pool',self._pool)
         _unique_structs_selected = {}
         for idx in selected_inds:
             comp = _unique_structs_buff[idx][0]

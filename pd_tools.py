@@ -1,5 +1,3 @@
-__author__ = Fengyu Xie
-
 from __future__ import division
 
 from collections import defaultdict
@@ -7,6 +5,7 @@ import numpy as np
 import random
 
 from pymatgen import Structure
+from pymatgen.core.sites import PeriodicSite
 from pymatgen.transformations.standard_transformations import OrderDisorderedStructureTransformation
 
 from copy import deepcopy
@@ -27,6 +26,7 @@ from cluster_expansion.ce import ClusterExpansion
 For the theoretical basis of this work, read:
 A van de Walle & M Asta 2002 Modelling Simul Mater Sci Eng 10 521
 """
+__author__ = 'Fengyu Xie'
 
 def merge_unions(regions):
     """
@@ -57,9 +57,9 @@ def get_bits(structure):
     all_bits = []
     for site in structure:
         bits = []
-        for sp in sorted(site.species_and_occu.keys()):
+        for sp in sorted(site.species.keys()):
             bits.append(str(sp))
-        if site.species_and_occu.num_atoms < 0.99:
+        if site.species.num_atoms < 0.99:
             bits.append("Vacancy")
         all_bits.append(bits)
     return all_bits
@@ -71,22 +71,22 @@ def get_n_bits(prim,sublat_merge_rule = None):
     n_bits = []
     if sublat_merge_rule is None:
         for sublat in prim:
-            n_bits.append(list(range(len(sublat.species()))))
+            n_bits.append(list(range(len(sublat.species))))
             if sublat.species.num_atoms<0.99:
-                n_bits[-1].append(len(sublat.species()))
+                n_bits[-1].append(len(sublat.species))
             #Vac will be taken as the last specie
     else:
         for group in sublat_merge_rule:
-            n_bits.append(list(range(len(prim[group[0]].species()))))
+            n_bits.append(list(range(len(prim[group[0]].species))))
             if prim[group[0]].species.num_atoms<0.99:
-                n_bits[-1].append(len(prim[0].species()))
+                n_bits[-1].append(len(prim[0].species))
     return n_bits
 
 def get_indgrps(prim,matrix,merge_sublats=None):
     """
        Generate the index groups for MC manipulation.
     """
-    scs = int(abs(np.linalg.det(matrix)))
+    scs = int(round(abs(np.linalg.det(matrix))))
     if merge_sublats is not None:
         sublat_list = merge_sublats
     else:
@@ -95,7 +95,7 @@ def get_indgrps(prim,matrix,merge_sublats=None):
     for sublat in sublat_list:
         WorthToExpand = True
         sublat_species = prim[sublat[0]].species
-        if type(sublat_species)==str or len(sublat_species)<==1:
+        if type(sublat_species)==str or len(sublat_species)<=1:
             WorthToExpand = False
         else:
             for specie in sublat_species:
@@ -116,7 +116,7 @@ def get_sublat_id(id_in_sc,sc_size, sublat_merge_rule = None):
         If any merging rule, should have the form like: [[0,1],[2,3]] so site 0 and site 1 in prim will now 
         be considered as a same sublattice. So are site 2 and site 3.
     """
-    id_in_prim = id_in_sc%sc_size #This is determined by the way pymatgen make_supercell
+    id_in_prim = id_in_sc//sc_size #This is determined by the way pymatgen make_supercell
     if sublat_merge_rule is None:
         return id_in_prim
     else:
@@ -134,7 +134,7 @@ def get_init_occu(clus_sup):
     rand_str = order.apply_transformation(rand_str)
     return clus_sup.occu_from_structure(rand_str)
 
-def get_flip(inds, occu, n_bits):
+def get_flip(inds, occu, n_bits, sc_size, sublat_merge_rule = None):
     """
     Flip a single specie.
     inds: site indices of the same sublattice.
@@ -142,10 +142,11 @@ def get_flip(inds, occu, n_bits):
             then: [0,1,2],[0,1]
     """
     i = random.choice(inds)
-    sp_avail = [sp for j in n_bits[i] if occu[i] != sp]
-    if not len(sp_avail): return []
-    sp_filp = random.choice(sp_avil)
-    return [(i, sp_flip),(i, sp_flip)]
+    sl_id = get_sublat_id(i,sc_size,sublat_merge_rule)
+    sp_avail = [sp for sp in n_bits[sl_id] if occu[i] != sp]
+    if len(sp_avail)==0: return []
+    sp_flip = random.choice(sp_avail)
+    return [(i, sp_flip)]
 
 def get_x(occu, n_bits,sc_size,sublat_merge_rule=None):
     """
@@ -168,6 +169,7 @@ def get_x(occu, n_bits,sc_size,sublat_merge_rule=None):
             x[idx][sp]+=1
 
     return x
+#Check this tomorrow!
 
 def get_dx(flip, occu, n_bits, sc_size, sublat_merge_rule = None):
     flipped_site = flip[0][0]
@@ -177,13 +179,14 @@ def get_dx(flip, occu, n_bits, sc_size, sublat_merge_rule = None):
 
     dx = []
     for sublat in n_bits:
-        dx.append([0]*len(sublat)
+        dx.append([0]*len(sublat))
     #dx has the same shape as n_bits, but x does not.
 
-    if sp_before<len(n_bits[flipped_sublat_id]):
-        dx[sublat_id][sp_before]-=1
-    if sp_after<len(n_bits[flipped_sublat_id]):
-        dx[sublat_id][sp_after]+=1
+    if sp_before < len(n_bits[flipped_sublat_id]):
+        dx[flipped_sublat_id][sp_before]-=1
+
+    if sp_after < len(n_bits[flipped_sublat_id]):
+        dx[flipped_sublat_id][sp_after]+=1
 
     return dx
 
@@ -192,6 +195,7 @@ def update_x(x,dx):
     for i,sublat in enumerate(x):
         for j,specie in enumerate(x[i]):
             x_new[i][j] += dx[i][j]
+    return x_new
 
 def normalize_x(x,sc_size,sublat_merge_rule=None):
     normed_x = deepcopy(x)
@@ -222,8 +226,14 @@ def estimate_from_series(Qs,p=0.001,z_a = 2.576):
     """
        Fix confidence level to 99%
     """
+    #print('est_e')
     L = len(Qs)
-    for t1 in range(1,L+1):
+    if L == 0 :
+        return None,None,None
+
+    step = max(L//100,1)
+    #select steps carefully so that we won't be wasting time.
+    for t1 in range(1,L,step):
         Q_sl1 = np.array(Qs)[t1-1:(t1+L)//2] 
         Q_sl2 = np.array(Qs)[(t1+L)//2:L]
         diff = np.abs(np.average(Q_sl1)-np.average(Q_sl2))
@@ -231,11 +241,20 @@ def estimate_from_series(Qs,p=0.001,z_a = 2.576):
             continue
         Q_sl = np.array(Qs)[t1-1:L]     
         corr_Qsl = np.correlate(Q_sl,Q_sl,mode='full')
-        corr_Qsl = corr_Qsl[corr_Qsl.size/2:]
+        corr_Qsl = corr_Qsl[corr_Qsl.size//2:]
+        if corr_Qsl.size<2:
+            continue
         V = np.average(Q_sl*Q_sl)-np.average(Q_sl)**2
-        reg = LinearRegression()
-        reg.fit(np.arange(corr_Qsl.size).reshape(-1,1),np.log(corr_Qsl))
-        rou = np.exp(-1.0*reg.coef_[0])
+
+        x = np.arange(corr_Qsl.size)
+        y = np.log(corr_Qsl)
+        x_av = np.average(x)
+        y_av = np.average(y)
+        xy_av = np.average(x*y)
+        x2_av = np.average(x*x)
+        slope = (x_av*y_av - xy_av)/(x_av**2-x2_av)
+        rou = np.exp(-1.0*slope)
+
         var_Q = V/Q_sl.size*(1+rou)/(1-rou)
         if V/Q_sl.size*(1+rou)/(1-rou)<(p/z_a)**2:
             #Converged
@@ -243,6 +262,7 @@ def estimate_from_series(Qs,p=0.001,z_a = 2.576):
     return None, None, None
     
 def estimate_x(xs,t1):
+    #print('est_x')
     x_sample = xs[t1-1:]
     x_av = [[0]*len(sublat) for sublat in x_sample[0]]
     var_x = [[0]*len(sublat) for sublat in x_sample[0]]
@@ -254,7 +274,7 @@ def estimate_x(xs,t1):
                 x_series.append(float(x[sl_id][sp_id]))
             x_series = np.array(x_series)
             corr_x = np.correlate(x_series,x_series,mode='full')
-            corr_x = corr_x[corr_x.size/2:]
+            corr_x = corr_x[corr_x.size//2:]
             V = np.average(x_series*x_series)-np.average(x_series)**2
             reg = LinearRegression()
             reg.fit(np.arange(corr_x.size).reshape(-1,1),np.log(corr_x))
@@ -294,13 +314,15 @@ def run_T_miu(ecis, cluster_supercell, occu, T, miu, ind_groups, sublat_merge_ru
 
     energies = [e]
     xs = [x]    
+    print('Init e: {}, init x: {}'.format(e,x))
 
     n_loops = 0
     equilibriated = False
-    while n_loops < max_loops:
+    while n_loops < max_loops*cluster_supercell.size:
         chosen_group = random.choice(ind_groups)
-        flip = get_flip(chosen_group, occu, n_bits)
-        d_corr, new_occu = cluster_supercell.delta_corr(flips, occu, debug=False)
+        flip = get_flip(chosen_group, occu, n_bits,cluster_supercell.size,sublat_merge_rule)
+        d_corr, new_occu = cluster_supercell.delta_corr(flip, occu, debug=False)
+        #print('\nd_corr',d_corr,'\noccu',occu,'\nnew_occu',new_occu)
         de = np.dot(d_corr, ecis) * cluster_supercell.size
         dx = get_dx(flip, occu, n_bits,cluster_supercell.size,sublat_merge_rule)
         dphi = get_dphi(de,miu,dx)
@@ -311,18 +333,20 @@ def run_T_miu(ecis, cluster_supercell, occu, T, miu, ind_groups, sublat_merge_ru
             occu = new_occu
             e += de
             x = update_x(x,dx)
-            
+            #print(e,x)
             energies.append(e)
             xs.append(x)
         
-        if n_loops%10000 == 0:
-        #Check exit every 10000 steps
+        if n_loops%(10000*cluster_supercell.size) == 0 and n_loops>=(max_loops*cluster_supercell.size//100):
+            #Check exit every 10000 steps, after minimum mc runs of 200000 steps, to avoid numerical instability,
+            #And lower computational costs.
             estimated_e,var_e,t1 = estimate_from_series(energies)
             if estimated_e is not None:
                 equilibriated = True
                 estimated_x,var_x = estimate_x(xs,t1)
                 break
         n_loops+=1
+
     if n_loops == max_loops and not equilibriated:
         print("Warning: Maximum possible filpping steps reached, but still not converged.")
         print("T:{}, mu: {}".format(T,miu))
@@ -336,7 +360,8 @@ def detect_pt_from_series(Qs,Cs,k=3,z_a=2.576):
     Gives a boolean.
     By default, choosing k=3, confidence level 99%
     """
-    if len(Qs)<k+2:
+    #Currently seem to find premature PT at high temp. Wondering why
+    if len(Qs)<k+3:
         return False
     C = np.array(Cs[:-1]).reshape(-1,1)
     xs = np.array([Cs[-1]**j for j in range(0,k+1)])
@@ -379,14 +404,14 @@ def scalar_to_matrix(mu,prim,sublat_merge_rule=None):
     return miu
 
 
-def matrix_to_scalar(sca):
+def matrix_to_scalar(mat):
     """
         2 comp systems only.
     """
-    for sublat in sca:
+    for sublat in mat:
         if len(sublat)==1:
             return sublat[0]
-    return None
+    raise ValueError("The provided matrix is not from a two component system!")
 
 class TwoCompPDFinder(object):
     def __init__(self,ecis,ce,matrix=[[5,0,0],[0,5,0],[0,0,5]],\
@@ -440,11 +465,40 @@ class TwoCompPDFinder(object):
                     That will be fine. 
         """
         self.ecis = ecis
-        self.clus_sup = ce.supercell_from_matrix(matrix)
-        self.ce = ce
-        self.prim = self.ce.structure
+        prim = ce.structure
+        #The composition of prim must be modified to suit the scs
         self.matrix = np.array(matrix)
-        self.scs = int(abs(np.linalg.det(matrix)))
+        self.scs = int(round(abs(np.linalg.det(matrix))))
+        
+        self.sublat_merge_rule = sublat_merge_rule      
+        
+        sites = []
+        #Modify site compositions, and accordingly, the ce object
+        for st_original in prim:
+            if st_original.species.num_atoms < 0.99:
+                n_species = len(st_original.species)+1
+            else:
+                n_species = len(st_original.species)
+            new_comp = {sp:float(self.scs//n_species)/self.scs for sp in\
+                        st_original.species}
+            st_mod = PeriodicSite(new_comp,st_original.frac_coords,prim.lattice,\
+                                  properties = st_original.properties)
+            sites.append(st_mod)
+        self.prim = Structure.from_sites(sites)
+
+ 
+        sites_to_expand = [site for site in self.prim if site.species.num_atoms < 0.99 \
+
+                            or len(site.species) > 1]
+        exp_structure = Structure.from_sites(sites_to_expand)
+        self.ce = ClusterExpansion(structure=self.prim,expansion_structure=exp_structure,\
+                                  symops=ce.symops,clusters=ce.clusters,ltol=ce.ltol,\
+                                  stol=ce.stol,angle_tol=ce.angle_tol,\
+                                  supercell_size=ce.supercell_size,use_ewald=ce.use_ewald,\
+                                  use_inv_r=ce.use_inv_r,eta=ce.eta,basis=ce.basis,\
+                                  sm_type=ce.sm_type)
+
+        self.clus_sup = self.ce.supercell_from_matrix(matrix)
 
         self.min_mu = min_mu
         self.max_mu = max_mu
@@ -454,16 +508,16 @@ class TwoCompPDFinder(object):
         kb = 8.617332e-5    #eV unit
         self.beta0 = 1/(kb*T0); self.beta1 = 1/(kb*T1)
         self.n_beta_steps = n_beta_steps
-        self.beta_step = abs(beta0-beta1)/n_beta_steps
+        self.beta_step = abs(self.beta0-self.beta1)/n_beta_steps
         self.fine_search_range = fine_search_range
-
-        self.sublat_merge_rule = sublat_merge_rule
     
         self.ind_groups = get_indgrps(self.prim,self.matrix,self.sublat_merge_rule)
 
         self.cur_occu = get_init_occu(self.clus_sup)
         #Store occu to make later MC runs equilibriate faster.
         
+        self.z_a = z_a
+        self.k = k
         self._pbs = None
 
     def find_pb(self,min_mu,max_mu,T):
@@ -484,6 +538,7 @@ class TwoCompPDFinder(object):
         """
         kb = 8.617332e-5
         beta0=1/(kb*T)
+        print('Searching phase boundaries under {} k, between {} eV, {} eV.'.format(T,min_mu,max_mu))
 
         mu_range = np.arange(min_mu,max_mu,self.mu_step)
         #energies = []
@@ -493,32 +548,38 @@ class TwoCompPDFinder(object):
         pbs = []
         #This stores the starting points of phase boundaries.
         for mu in mu_range:
-            miu = scalar_to_matrix(mu,self.clus_sup,self.sublat_merge_rule)
-            e,_,x_lst,_,new_occu=run_T_miu(self.ecis, self.clus_sup, self.cur_occu, T, miu, \
+            print('Running mu: {} ev'.format(mu))
+            miu = scalar_to_matrix(mu,self.prim,self.sublat_merge_rule)
+            e,_,x_lst,vx_lst,new_occu=run_T_miu(self.ecis, self.clus_sup, self.cur_occu, T, miu, \
                                          self.ind_groups, self.sublat_merge_rule)
             
             #Use normalized quantities
+            print('Energy : {} eV'.format(e))
             x_lst = normalize_x(x_lst,self.scs,self.sublat_merge_rule)
             x = matrix_to_scalar(x_lst)
+            vx = matrix_to_scalar(vx_lst)
             
             #Only untransformed phase points will be saved into series
             if detect_pt_from_series(energies+[e],mus+[mu],k=self.k,z_a=self.z_a):
+                print("Phase transition detected, refining.")
                 cnt = 0
                 mu_ub = mu
-                mu_lb = mu-mu_step
+                mu_lb = mu-self.mu_step
                 e_gamma = e
                 x_gamma = x
                 #refine location of PB for twice using bisection. Can reach 0.01eV precision.
                 while cnt<3:
+                    cnt+=1
                     mu_test = (mu_ub+mu_lb)/2
-                    miu = scalar_to_matrix(mu_test,cluster_supercell,sublat_merge_rule)
-                    e,_,x_lst,_,new_occu = run_T_miu(self.ecis, self.clus_sup, self.cur_occu,\
+                    miu = scalar_to_matrix(mu_test,self.prim,self.sublat_merge_rule)
+                    e,_,x_lst,vx_lst,new_occu = run_T_miu(self.ecis, self.clus_sup, self.cur_occu,\
                                                      T, miu, self.ind_groups, \
                                                      self.sublat_merge_rule)
 
 
                     x_lst = normalize_x(x_lst,self.scs,self.sublat_merge_rule)
                     x = matrix_to_scalar(x_lst)
+                    vx = matrix_to_scalar(vx_lst)
               
                     if detect_pt_from_series(energies+[e],mus+[mu_test],k=self.k,z_a=self.z_a):
                         mu_ub= mu_test
@@ -534,17 +595,25 @@ class TwoCompPDFinder(object):
                 e_alpha = energies[-1]
                 x_alpha = xs[-1]
 
-                mu_mid = (mu_ub+mu_lb)/2
-                dpb = (e_gamma-e_alpha)/(beta0*(x_gamma-x_alpha))- mu_mid/beta0
-                #position and tangent of the discovered phase boundary point.
-                #Gamma: high mu phase;
-                #Alpha: low mu phase.
-                pbs.append((T, mu_mid,x_alpha,x_gamma,dpb))
+                if abs(x_alpha-x_gamma)/np.sqrt(vx) > self.z_a:  
+                    mu_mid = (mu_ub+mu_lb)/2
+                    dpb = (e_gamma-e_alpha)/(beta0*(x_gamma-x_alpha))- mu_mid/beta0
+                    #position and tangent of the discovered phase boundary point.
+                    #Gamma: high mu phase;
+                    #Alpha: low mu phase.
+                    pbs.append((T, mu_mid,x_alpha,x_gamma,dpb))
+                    print('PT point: ',(T,mu_mid,x_alpha,x_gamma,dpb))
     
-                #clear out, restart from another phase region.
-                xs = []
-                mus = []
-                energies = []
+                    #clear out, restart from another phase region.
+                    xs = []
+                    mus = []
+                    energies = []
+                else:
+                    #PT is bogus, will be treated as if no PT was detected.
+                    xs.append(x)
+                    mus.append(mu)
+                    energies.append(e)
+                    self.cur_occu = new_occu  
             else:
                 xs.append(x)
                 mus.append(mu)
@@ -552,8 +621,9 @@ class TwoCompPDFinder(object):
                 self.cur_occu = new_occu
     
         if len(pbs)==0:
-            print("No phase transition can be found under T = {} K, mu = {0:.3f}~{0:.3f} eV!".\
+            print("No phase transition can be found under T = {} K, mu = {}~{} eV!".\
                    format(T,min_mu,max_mu))
+        print('Detected phase boundary points:\n',pbs)
         return pbs
 
     def extend_pb(self,pb_line,k=None, z_a = None): #Is this gramatically correct?
@@ -589,6 +659,7 @@ class TwoCompPDFinder(object):
         min_mu = pred_mu-self.mu_step*self.fine_search_range
         max_mu = pred_mu+self.mu_step*self.fine_search_range
 
+        print("Fine searching:")
         new_pbs = self.find_pb(min_mu,max_mu,pred_T)
         #This should be able to tolerate a prediction deviation within +-2 mu_step
         if len(new_pbs)==0:
@@ -631,6 +702,7 @@ class TwoCompPDFinder(object):
             Outputs:
                 a list containing all phase boundary information
         """
+        print("#### Automatic Phase Boundary Tracking ####")
         if self._pbs is not None:
             return self._pbs
         bt0 = self.beta0; bt1 = self.beta1;
@@ -644,6 +716,7 @@ class TwoCompPDFinder(object):
         kb = 8.617332e-5
         for beta in beta_range:
             T = 1/(kb*beta)
+            print("Moving to T = {} K.".format(T))
             #Detect new active phase boundaries
             while len(search_ranges):
                 mu_lb,mu_ub=search_ranges[0]
@@ -737,7 +810,7 @@ class TwoCompPDFinder(object):
         return socket
 
     def as_dict(self):
-        return {'ecis':self.ecis,\
+        return {'ecis':self.ecis.tolist() if type(self.ecis)==np.ndarray else self.ecis,\
                 'ce':self.ce.as_dict(),\
                 'matrix':self.matrix.tolist(),\
                 'min_mu':self.min_mu,\
@@ -749,6 +822,6 @@ class TwoCompPDFinder(object):
                 'sublat_merge_rule':self.sublat_merge_rule,\
                 'z_a':self.z_a,\
                 'k':self.k,\
-                'fine_search_range':self.fine_search_range
+                'fine_search_range':self.fine_search_range,\
                 'pbs':self._pbs\
                }

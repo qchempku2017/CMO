@@ -73,6 +73,17 @@ def factors(n):
     return set(reduce(list.__add__,
                       ([i, n // i] for i in range(1, int(n ** 0.5) + 1) if n % i == 0)))
 
+def Get_Diag_Matrices(Num):
+    """
+    There is always numerical instability with structure matcher. Should 
+    Abandon higly skewed structures.
+    """
+    Mats = []; Factors = list(factors(Num))
+    for a,b,c in list(combinations(Factors,3)):
+        Mat = np.array([[a, 0, 0], [0, b, 0], [0, 0, c]])
+        Mats.append(Mat);
+    return Mats;
+
 def Get_Hermite_Matricies(Num):
     """
     This function take in an integer and computes all
