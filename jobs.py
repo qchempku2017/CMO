@@ -22,7 +22,7 @@ from generator_tools import *
 from analyzer_tools import *
 #from runner_tools import *
 from gs_tools import * 
-from utils import *
+from cluster_expansion.utils import *
 from collections import OrderedDict
 
 class CEJob(object):

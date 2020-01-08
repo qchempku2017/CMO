@@ -1,7 +1,7 @@
 from pymatgen.analysis.ewald import EwaldSummation
 from pymatgen import Structure
 from pymatgen.core.sites import PeriodicSite
-from utils import *
+from cluster_expansion.utils import *
 
 def ewald_correction(ce,supmat,ecis):
     """

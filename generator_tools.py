@@ -36,7 +36,7 @@ import multiprocessing
 import collections
 
 from cluster_expansion.mc import *
-from utils import *
+from cluster_expansion.utils import *
 from selector_tools import *
 
 ##################################
@@ -62,7 +62,7 @@ def _Enumerate_SC(maxDet,prim,n_select=1,transmat=None):
     trans_size = int(round(abs(np.linalg.det(transmat)))) if transmat else 1
 
     for det in range(int(maxDet/4),maxDet+1,int(maxDet/4)):
-        scs.extend(Get_Diag_Matricies(int(det/trans_size)))
+        scs.extend(Get_Diag_Matrices(int(det/trans_size)))
     print('Generated %d supercell matrices with max determinant %d'%(len(scs),maxDet))
     scs = [sc for sc in scs if _is_proper_sc(sc,prim)]
     print('Picking %d random rectangular supercells.'%(n_select))

@@ -80,8 +80,9 @@ def Get_Diag_Matrices(Num):
     """
     Mats = []; Factors = list(factors(Num))
     for a,b,c in list(combinations(Factors,3)):
-        Mat = np.array([[a, 0, 0], [0, b, 0], [0, 0, c]])
-        Mats.append(Mat);
+        if a*b*c == Num:
+            Mat = np.array([[a, 0, 0], [0, b, 0], [0, 0, c]])
+            Mats.append(Mat.tolist());
     return Mats;
 
 def Get_Hermite_Matricies(Num):

@@ -33,7 +33,7 @@ from monty.serialization import dumpfn
 ## just get over it and use dumpfn.
 
 from assign_tools import ChargeAssign
-from utils import *
+from cluster_expansion.utils import *
 
 #### Private tools ####
 # This one is deprecated

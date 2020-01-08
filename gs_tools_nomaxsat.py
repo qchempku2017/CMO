@@ -20,7 +20,7 @@ from pymatgen.util.coord import coord_list_mapping_pbc
 from pymatgen import Structure,PeriodicSite
 from pymatgen.analysis.structure_matcher import StructureMatcher
 
-from utils import *
+from cluster_expansion.utils import *
 from ewald_tools import *
 from block_tools import CEBlock
 from auxi_tools import *

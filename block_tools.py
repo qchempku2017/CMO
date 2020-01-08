@@ -2,7 +2,6 @@ __author__ = 'Fengyu Xie'
 __version__ = 1.0
 
 from gurobipy import *
-from utils import *
 from cluster_expansion.mc import *
 
 from pymatgen.util.coord import lattice_points_in_supercell
@@ -12,7 +11,7 @@ import numpy as np
 import random
 
 from itertools import product,chain
-from utils import *
+from cluster_expansion.utils import *
 #from auxi_tools import add_softcls_terms
 
 """
