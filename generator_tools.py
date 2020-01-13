@@ -288,7 +288,7 @@ def _write_mc_structs(unique_structs,ro_axis_strings,outdir='vasp_run'):
         import re
 
         for dirname in os.listdir(outdir):
-            with open(os.path.join(dirname,'composition_by_site')) as RO_file:
+            with open(os.path.join(outdir,dirname,'composition_by_site')) as RO_file:
                 RO_old = json.load(RO_file)
                 RO_old_string = json.dumps(RO_old)
             ro_id = int(re.search(r'\d+', dirname).group())
