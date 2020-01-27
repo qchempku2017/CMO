@@ -10,8 +10,6 @@ from pymatgen.transformations.standard_transformations import OrderDisorderedStr
 
 from copy import deepcopy
 import os
-from sklearn.linear_model import LinearRegression
-
 from scipy import interpolate
 
 import matplotlib.pyplot as plt
@@ -27,6 +25,46 @@ For the theoretical basis of this work, read:
 A van de Walle & M Asta 2002 Modelling Simul Mater Sci Eng 10 521
 """
 __author__ = 'Fengyu Xie'
+
+def auto_correlate(x):
+    """
+        Inputs:
+            x: array-like
+        Outputs:
+            v_l: autocorrelation of x. Is an np.ndarray.
+                 v_l = sum(x_i+x_i+l)/(L-l)-x_av**2
+    """
+    L = len(x)
+    x_av = np.average(x)
+    corr_x = []
+    for l in range(L):
+        v_l = 0
+        for t in range(L-l):
+            v_l+=x[t]*x[t+l]
+        v_l = v_l/(L-l)-x_av**2
+        corr_x.append(v_l)
+    return np.array(corr_x)
+
+def get_rou_V(x):
+    corr_x = auto_correlate(x)
+    V = corr_x[0]
+    
+    V_half = V/2
+     
+    if corr_x.size<=2:
+        return None,V
+    
+    l = None
+    for i in range(corr_x.size-1):
+        if corr_x[i]<=V_half and corr_x[i+1]>=V_half:
+            l = i
+            break
+    if l is not None:
+        rou = 2**(-1.0/l)
+    else:
+        return None,V
+
+    return rou,V
 
 def merge_unions(regions):
     """
@@ -225,6 +263,7 @@ def estimate_from_series(Qs,p=0.001,z_a = 2.576):
     ### See A van de Walle and M Asta 2002 Modelling Simul. Mater. Sci. Eng. 10 521
     """
        Fix confidence level to 99%
+       P; max tolarated variance percentage to expectation value. default is 1e-4
     """
     #print('est_e')
     L = len(Qs)
@@ -236,29 +275,21 @@ def estimate_from_series(Qs,p=0.001,z_a = 2.576):
     for t1 in range(1,L,step):
         Q_sl1 = np.array(Qs)[t1-1:(t1+L)//2] 
         Q_sl2 = np.array(Qs)[(t1+L)//2:L]
-        diff = np.abs(np.average(Q_sl1)-np.average(Q_sl2))
-        if diff>p:
-            continue
-        Q_sl = np.array(Qs)[t1-1:L]     
-        corr_Qsl = np.correlate(Q_sl,Q_sl,mode='full')
-        corr_Qsl = corr_Qsl[corr_Qsl.size//2:]
-        if corr_Qsl.size<2:
-            continue
-        V = np.average(Q_sl*Q_sl)-np.average(Q_sl)**2
+        diff = abs(np.average(Q_sl1)-np.average(Q_sl2))
+        Q_sl = np.array(Qs)[t1-1:L] 
+        Q_av = np.average(Q_sl)
+        if diff>abs(p*Q_av):
+            continue    
+        rou,V = get_rou_V(Q_sl)
 
-        x = np.arange(corr_Qsl.size)
-        y = np.log(corr_Qsl)
-        x_av = np.average(x)
-        y_av = np.average(y)
-        xy_av = np.average(x*y)
-        x2_av = np.average(x*x)
-        slope = (x_av*y_av - xy_av)/(x_av**2-x2_av)
-        rou = np.exp(-1.0*slope)
+        if rou is None or V is None:
+            continue
+        print('rou',rou,'V',V)
 
         var_Q = V/Q_sl.size*(1+rou)/(1-rou)
-        if V/Q_sl.size*(1+rou)/(1-rou)<(p/z_a)**2:
+        if var_Q<=(p*Q_av/z_a)**2:
             #Converged
-            return np.average(Q_sl), var_Q, t1
+            return Q_av, var_Q, t1
     return None, None, None
     
 def estimate_x(xs,t1):
@@ -272,13 +303,12 @@ def estimate_x(xs,t1):
             x_series = []
             for x in x_sample:
                 x_series.append(float(x[sl_id][sp_id]))
+            
             x_series = np.array(x_series)
-            corr_x = np.correlate(x_series,x_series,mode='full')
-            corr_x = corr_x[corr_x.size//2:]
-            V = np.average(x_series*x_series)-np.average(x_series)**2
-            reg = LinearRegression()
-            reg.fit(np.arange(corr_x.size).reshape(-1,1),np.log(corr_x))
-            rou = np.exp(-1.0*reg.coef_[0])
+            rou,V = get_rou_V(x_series)
+            if rou is None:
+                print("Warning: rou_x not found. Guessing 0.9999")
+                rou = 0.9999
             v_x = V/x_series.size*(1+rou)/(1-rou)
             var_x[sl_id][sp_id]=v_x
             x_av[sl_id][sp_id]=np.average(x_series)
@@ -286,14 +316,14 @@ def estimate_x(xs,t1):
     return x_av,var_x
 
 #Semi-grand canonical ensemble tools. Currently only useful for 2 components.
-def run_T_miu(ecis, cluster_supercell, occu, T, miu, ind_groups, sublat_merge_rule = None, max_loops=1000000, e_prec=0.001):
+def run_T_miu(ecis, cluster_supercell, occu, T, miu, ind_groups, sublat_merge_rule = None, max_loops=100000, e_prec=0.001):
     """
     miu: relative chemical potentials, for each sublattice.
          For example, we have two sublattices, each occupied with 
          ['Li+','Mn2+','Mn3+'], ['O2-','F-'], then miu should take the 
          form: [[0.1,-0.5],[0.8]], etc. The composition of a supercell
          should also have similar form.
-    e_prec: target energy precision in eV. By default, 0.001.
+    e_prec: target energy precision in portion of the total energy. By default, 0.1%.
     """
     ind_groups_non_empty = []
     for ind_group in ind_groups:
@@ -334,20 +364,23 @@ def run_T_miu(ecis, cluster_supercell, occu, T, miu, ind_groups, sublat_merge_ru
             e += de
             x = update_x(x,dx)
             #print(e,x)
-            energies.append(e)
-            xs.append(x)
-        
-        if n_loops%(10000*cluster_supercell.size) == 0 and n_loops>=(max_loops*cluster_supercell.size//100):
-            #Check exit every 10000 steps, after minimum mc runs of 200000 steps, to avoid numerical instability,
+        energies.append(e)
+        xs.append(x)
+        n_loops+=1
+        #According to metropolis algo, all the time steps should be stored, for Markov process to have exponential 
+        #behavior!        
+
+        if n_loops%(max_loops*cluster_supercell.size//1000) == 0 and n_loops>0:
+            #Check exit every 1000 steps, after minimum mc runs of 1000 steps, to avoid numerical instability,
             #And lower computational costs.
+            print('Loops: ',n_loops,'x',x)
             estimated_e,var_e,t1 = estimate_from_series(energies)
-            if estimated_e is not None:
+            if estimated_e is not None and var_e is not None and t1 is not None:
                 equilibriated = True
                 estimated_x,var_x = estimate_x(xs,t1)
                 break
-        n_loops+=1
 
-    if n_loops == max_loops and not equilibriated:
+    if n_loops == max_loops*cluster_supercell.size and not equilibriated:
         print("Warning: Maximum possible filpping steps reached, but still not converged.")
         print("T:{}, mu: {}".format(T,miu))
         return estimated_e,None,x,None,occu
@@ -568,7 +601,7 @@ class TwoCompPDFinder(object):
                 e_gamma = e
                 x_gamma = x
                 #refine location of PB for twice using bisection. Can reach 0.01eV precision.
-                while cnt<3:
+                while cnt<2:
                     cnt+=1
                     mu_test = (mu_ub+mu_lb)/2
                     miu = scalar_to_matrix(mu_test,self.prim,self.sublat_merge_rule)
@@ -610,6 +643,7 @@ class TwoCompPDFinder(object):
                     energies = []
                 else:
                     #PT is bogus, will be treated as if no PT was detected.
+                    print('Phase transition is statistically insignificant. Abandoned.')
                     xs.append(x)
                     mus.append(mu)
                     energies.append(e)
@@ -716,19 +750,27 @@ class TwoCompPDFinder(object):
         kb = 8.617332e-5
         for beta in beta_range:
             T = 1/(kb*beta)
-            print("Moving to T = {} K.".format(T))
-            #Detect new active phase boundaries
-            while len(search_ranges):
-                mu_lb,mu_ub=search_ranges[0]
+            print("Moving to T = {} K. Will be searching in {} mu ranges".format(T,len(search_ranges)))
+
+            #Detect new active phase boundaries after some dead ends.
+            ranges_to_remove = []
+            for mu_lb,mu_ub in search_ranges:
                 new_pbs = self.find_pb(mu_lb,mu_ub,T)       
                 if len(new_pbs):     
                     active_pb_lines.extend([[new_pb] for new_pb in new_pbs])
                     active_mus.extend([new_pb[1] for new_pb in new_pbs])
-                    search_ranges.remove([mu_lb,mu_ub])
-                    mu_key = lambda x:x[1]
-                    active_pb_lines = sorted(active_pb_lines,key=mu_key)
-                    active_mus = sorted(active_mus)          
-    
+                    ranges_to_remove.append([mu_lb,mu_ub])
+
+            mu_key = lambda x:x[1]
+            active_pb_lines = sorted(active_pb_lines,key=mu_key)
+            active_mus = sorted(active_mus) 
+
+            for r in ranges_to_remove:
+                search_ranges.remove(r)
+            #Better not to remove things in cycle.        
+            
+            pbs_to_remove = []
+            mus_to_remove = []
             for idx,(pb_line,active_mu) in enumerate(zip(active_pb_lines,active_mus)):
                 new_pb_point = self.extend_pb(pb_line) #needs to be written
                 if new_pb_point is not None:
@@ -736,15 +778,19 @@ class TwoCompPDFinder(object):
                 else:
                     #This line is dead
                     dead_pb_lines.append(pb_line)
-                    active_pb_lines.remove(pb_line)
+                    pbs_to_remove.append(pb_line)
                     print("A PB line is dead at T={} K, mu={} ev".\
                           format(pb_line[-1][0],pb_line[-1][1]))
     
                     search_lb = active_mus[idx-1] if idx>=1 else min_mu 
                     search_ub = active_mus[idx+1] if idx<=len(active_mus)-2 else max_mu
                     search_ranges.append([search_lb,search_ub])
-    
-                    active_mus.remove(active_mu)
+                    mus_to_remove.append(active_mu)
+
+            for pb_line in pbs_to_remove:
+                active_pb_lines.remove(pb_line)
+            for mu in mus_to_remove:
+                active_mus.remove(mu)
     
             search_ranges = merge_unions(search_ranges)  #needs  to be written
     
