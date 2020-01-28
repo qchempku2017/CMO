@@ -1,0 +1,14 @@
+compaxis:
+    - CaO
+    - MgO
+max_vacs:
+    - 1.0
+    - 0.0
+transmat:
+    [[1,1,-1],[1,-1,1],[-1,1,1]]
+sample_step:
+    8
+sm_type:
+    an_frame
+max_sc_size:
+    64
