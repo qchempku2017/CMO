@@ -1,0 +1,9 @@
+merge_sublats:
+    -[1]
+    -[2,3]
+sample_step:
+    8
+sm_type:
+    an_frame
+max_sc_size:
+    64
