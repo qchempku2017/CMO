@@ -239,8 +239,13 @@ class CalcAnalyzer(object):
                 if compstring not in self.calcdata['compositions']:
                     self.calcdata['compositions'][compstring]=[]
                 
-                with open(os.path,join(parent_root,'matrix')) as mat_file:
-                    matrix = json.load(matrix)
+                if not os.path.isfile(os.path.join(parent_root,'matrix')):
+                    print('Warning: matrix presave not found. Will autodetect supercell matrix using structure matcher,\
+                           and will suffer from numerical errors!')
+                    matrix = None
+                else:
+                    with open(os.path.join(parent_root,'matrix')) as mat_file:
+                        matrix = json.load(mat_file)
                 #Check existence of output structure
                 try:
                     relaxed_struct = Poscar.from_file(os.path.join(root,'CONTCAR')).structure
@@ -359,8 +364,11 @@ class CalcAnalyzer(object):
                     # Checking whether structure can be mapped to corr function.
                     # This is out deformation tolerance.     
                     try:
-                        cesup = self.ce.supercell_from_matrix(mats[i])
-                        corr=cesup.corr_from_structure(relaxed_deformed_assigned[i])
+                        if mats[i] is not None:
+                            cesup = self.ce.supercell_from_matrix(mats[i])
+                            corr=cesup.corr_from_structure(relaxed_deformed_assigned[i])
+                        else:
+                            corr=self.ce.corr_from_structure(relaxed_deformed_assigned[i])
                     except:
                         print("Entry {} too far from original lattice. Skipping.".format(roots[i]))
                         open(os.path.join(roots[i],'failed'),'a').close()
@@ -390,8 +398,11 @@ class CalcAnalyzer(object):
                 # Checking whether structure can be mapped to corr function.
                 # This is out deformation tolerance.     
                 try:
-                    cesup = self.ce.supercell_from_matrix(new_entry['matrix'])
-                    corr = cesup.corr_from_structure(relaxed_deformed_assigned[i])
+                    if new_entry['matrix'] is not None:
+                        cesup = self.ce.supercell_from_matrix(new_entry['matrix'])
+                        corr = cesup.corr_from_structure(Structure.from_dict(new_entry['relaxed_defromed']))
+                    else:
+                        corr = self.ce.corr_from_structure(Structure.from_dict(new_entry['relaxed_defromed']))
                 except:
                     print("Entry {} too far from original lattice. Skipping.".format(root))
                     open(os.path.join(root,'failed'),'a').close()
