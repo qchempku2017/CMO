@@ -307,6 +307,7 @@ class CEJob(object):
             os.chdir(parentDir)
         print('Submissions done, waiting for calculations.')
         
+        print('Beginning time: ', time.time())
         while True:
             #try:
             import qstat #only for SGE queueing system
@@ -324,8 +325,9 @@ class CEJob(object):
             #except:
             #    print('Queue status not normal, continuing.')
             #    continue
-            print('Time:',time.time())
+            #print('Time:',time.time())
             time.sleep(self.checking_interval)
+        print('Ending time: ', time.time())
 
     def run_ce(self,refit_only=False):
         """
