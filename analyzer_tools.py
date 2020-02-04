@@ -36,44 +36,6 @@ from assign_tools import ChargeAssign
 from cluster_expansion.utils import *
 
 #### Private tools ####
-# This one is deprecated
-#def _assign_ox_states(struct,magmoms):
-#    """
-#    Assign oxidation states based on magnetic moments taken from the OUTCAR.
-#    Reference magnetic moments obtained by looking at a bunch of structures.
-#
-#    DOES NOT CHECK THAT THE ASSIGNMENT IS CHARGE BALANCED!
-#
-#    Currently assinging based on an OXRange dict file, but does not ensure 
-#    charge balance!!
-#
-#    Args:
-#        Str: structure
-#        Mag: list of magnetic moments for the sites in s
-#    """
-#    # Oxidation states corresponding to a range of magnetic moments (min, max)
-#    ###OXRange imported from OxData.py
-#    # Talk to Tina Chen about stable Oxstate assignment.
-#    DefaultOx={'Li':1,'F':-1,'O':-2, 'Mg':2, 'Ca':2 }
-#    OxLst=[];
-#    # Restricted Ox state for O to 2 here, but actually can be one. There is currently
-#    # no good method to assign since O magmoms are usually highly inaccurate. We have 
-#    # to do that.
-#
-#    for site_id, site in enumerate(struct):
-#        Assigned=False;
-#        if site.species_string in OXRange.keys():
-#            for (MinMag,MaxMag),MagOx in OXRange[site.species_string].items():
-#                if magmoms[site_id]>=MinMag and magmoms[site_id]<MaxMag:
-#                    OxLst.append(MagOx); Assigned=True; break;
-#        elif site.species_string in DefaultOx.keys():
-#            OxLst.append(DefaultOx[site.species_string]); Assigned=True;
-#        if not Assigned:
-#            print("Cant assign ox states for site={}, mag={}".\
-#                    format(Site,Mag[SiteInd])); assert Assigned;
-#
-#    struct.add_oxidation_state_by_site(OxLst);
-#    return struct
  
 #### Public Tools ####
 class CalcAnalyzer(object):
@@ -165,8 +127,9 @@ class CalcAnalyzer(object):
 
             self.ce = ClusterExpansion.from_radii(self.prim, self.ce_radius,sm_type = self.sm_type,\
                                      ltol=self.ltol, stol=self.stol, angle_tol=self.angle_tol,\
-                                     supercell_size='volume',use_ewald=True,\
+                                     supercell_size='num_sites',use_ewald=True,\
                                      use_inv_r=False,eta=None, basis=self.basis);
+            #Using num_sites is a much better way to use sm.
          
     
         #self.max_deformation = max_deformation
@@ -201,10 +164,12 @@ class CalcAnalyzer(object):
         
         ValidStrs = []
         energies = []
+        supmats = []
         for comp in self.calcdata['compositions']:
             for entry in self.calcdata['compositions'][comp]:
                 ValidStrs.append(Structure.from_dict(entry['relaxed_deformed']))
                 energies.append(entry['total_energy'])
+                supmats.append(entry['matrix'])
     
         #print('ValidStrs',ValidStrs,'len',len(ValidStrs))
         #print('energies',energies,'len',len(energies))
@@ -216,17 +181,17 @@ class CalcAnalyzer(object):
             self.ECIG=EciGenerator.unweighted(cluster_expansion=self.ce, structures=ValidStrs,\
                                      energies = energies,\
                                      max_dielectric=self.max_de, max_ewald=self.max_ew, \
-                                     solver = self.solver);
+                                     solver = self.solver,supercell_matrices=supmats);
         elif self.weight == 'e_above_hull':
             self.ECIG=EciGenerator.weight_by_e_above_hull(cluster_expansion=self.ce, structures=ValidStrs,\
                                      energies = energies,\
                                      max_dielectric=self.max_de, max_ewald=self.max_ew, \
-                                     solver = self.solver);
+                                     solver = self.solver,supercell_matrices=supmats);
         elif self.weight == 'e_above_comp':
             self.ECIG=EciGenerator.weight_by_e_above_comp(cluster_expansion=self.ce, structures=ValidStrs,\
                                      energies = energies,\
                                      max_dielectric=self.max_de, max_ewald=self.max_ew, \
-                                     solver = self.solver);
+                                     solver = self.solver,supercell_matrices=supmats);
         
         else:
             raise ValueError('Weighting option not implemented!')
@@ -273,7 +238,9 @@ class CalcAnalyzer(object):
     
                 if compstring not in self.calcdata['compositions']:
                     self.calcdata['compositions'][compstring]=[]
-                 
+                
+                with open(os.path,join(parent_root,'matrix')) as mat_file:
+                    matrix = json.load(matrix)
                 #Check existence of output structure
                 try:
                     relaxed_struct = Poscar.from_file(os.path.join(root,'CONTCAR')).structure
@@ -339,6 +306,7 @@ class CalcAnalyzer(object):
                 new_entry['relaxed_deformed']=relaxed_deformed.as_dict()
                 new_entry['total_energy']=TotE
                 new_entry['magmoms']=Mag
+                new_entry['matrix']=matrix
     
                 if os.path.isfile(os.path.join(parent_parent_root,'axis')):
                     with open(os.path.join(parent_parent_root,'axis')) as axisfile:
@@ -361,6 +329,7 @@ class CalcAnalyzer(object):
             energies = []
             comps = []
             inputs = []
+            mats = []
             if 'axis' in new_unassigned_strs[0][2]:
                 axis = []
             for compstring,root,new_entry in new_unassigned_strs:
@@ -377,6 +346,7 @@ class CalcAnalyzer(object):
                 comps.append(compstring)
                 inputs.append(Structure.from_dict(new_entry['input_structure']))
                 energies.append(new_entry['total_energy'])
+                mats.append(new_entry['matrix'])
                 if 'axis' in new_entry:
                     axis.append(new_entry['axis'])
                 
@@ -389,7 +359,8 @@ class CalcAnalyzer(object):
                     # Checking whether structure can be mapped to corr function.
                     # This is out deformation tolerance.     
                     try:
-                        self.ce.corr_from_structure(relaxed_deformed_assigned[i])
+                        cesup = self.ce.supercell_from_matrix(mats[i])
+                        corr=cesup.corr_from_structure(relaxed_deformed_assigned[i])
                     except:
                         print("Entry {} too far from original lattice. Skipping.".format(roots[i]))
                         open(os.path.join(roots[i],'failed'),'a').close()
@@ -399,6 +370,7 @@ class CalcAnalyzer(object):
                     assigned_entry['input_structure']=inputs[i].as_dict()
                     assigned_entry['relaxed_structure']=relaxed_strs_assigned[i].as_dict()
                     assigned_entry['relaxed_deformed']=relaxed_deformed_assigned[i].as_dict()
+                    assigned_entry['matrix']=mats[i]
                     assigned_entry['total_energy']=energies[i]
                     assigned_entry['magmoms']=mags[i]
                     if 'axis' in new_unassigned_strs[0][2]:
@@ -418,7 +390,8 @@ class CalcAnalyzer(object):
                 # Checking whether structure can be mapped to corr function.
                 # This is out deformation tolerance.     
                 try:
-                    self.ce.corr_from_structure(relaxed_deformed_assigned[i])
+                    cesup = self.ce.supercell_from_matrix(new_entry['matrix'])
+                    corr = cesup.corr_from_structure(relaxed_deformed_assigned[i])
                 except:
                     print("Entry {} too far from original lattice. Skipping.".format(root))
                     open(os.path.join(root,'failed'),'a').close()

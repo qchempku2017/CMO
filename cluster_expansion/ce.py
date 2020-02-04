@@ -293,7 +293,7 @@ class ClusterExpansion(object):
 
     def __init__(self, structure, expansion_structure, symops, clusters, \
                  sm_type='pmg_sm', ltol=0.2, stol=0.1, angle_tol=5,\
-                 supercell_size='volume', use_ewald=False, use_inv_r=False, eta=None, basis = '01'):
+                 supercell_size='num_sites', use_ewald=False, use_inv_r=False, eta=None, basis = '01'):
         """
             Args:
                 structure:

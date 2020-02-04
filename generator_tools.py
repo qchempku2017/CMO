@@ -39,6 +39,11 @@ from cluster_expansion.mc import *
 from cluster_expansion.utils import *
 from selector_tools import *
 
+"""
+Update Notes:
+2-3-20 Fengyu Xie: From now on, we will store the supercell matrix from enumeration step, to prevent
+inaccuracy and inefficiency of matrix generation by pymatgen.StructureMatcher.
+"""
 ##################################
 ## Less general tools that are not cross refered by other modules
 ##################################
@@ -220,7 +225,7 @@ def _get_mc_structs(SCLst,CE,ecis,merge_sublats=None,TLst=[500, 1500, 10000],com
 	    # Save best structure and a few random structures from the production run
             mc_structs[RO_string].append((clusSC.structure_from_occu(min_occu),T))
             for rand, rand_e in rand_occu:
-                mc_structs[RO_string].append((clusSC.structure_from_occu(rand),T))
+                mc_structs[RO_string].append((clusSC.structure_from_occu(rand),SC))
 
         sc_ro_pair_id += 1
 
@@ -234,7 +239,7 @@ def _get_mc_structs(SCLst,CE,ecis,merge_sublats=None,TLst=[500, 1500, 10000],com
         if RO_string not in unique_structs:
             unique_structs[RO_string] = []
 
-        for struct,T in structs:
+        for struct,matrix in structs:
             unique = True
             if RO_string in calculated_structures:
                 for ostruct in calculated_structures[RO_string]:
@@ -249,8 +254,9 @@ def _get_mc_structs(SCLst,CE,ecis,merge_sublats=None,TLst=[500, 1500, 10000],com
             if unique:
                 try:
                     #Check if structure matcher works for this structure. If not, abandon.
-                    CE.corr_from_structure(struct)
-                    unique_structs[RO_string].append(struct)
+                    cs=CE.supercell_from_matrix(matrix)
+                    corr=cs.corr_from_structure(struct)
+                    unique_structs[RO_string].append((struct,matrix))
                     unqCnt += 1
                 except:
                     continue
@@ -321,7 +327,7 @@ def _write_mc_structs(unique_structs,ro_axis_strings,outdir='vasp_run'):
             if not os.path.isfile(axis_file_path):
                 with open(axis_file_path,'w') as axisfile:
                     axisfile.write(ro_axis_strings[RO_string])
-        for i, struct in enumerate(structs):
+        for i, (struct,matrix) in enumerate(structs):
             if RO_string in old_str_max_ids:
                 structDir = os.path.join(compPathDir,str(i+old_str_max_ids[RO_string]+1))
             else:
@@ -329,6 +335,9 @@ def _write_mc_structs(unique_structs,ro_axis_strings,outdir='vasp_run'):
 
             if not os.path.isdir(structDir): os.mkdir(structDir)
             Poscar(struct.get_sorted_structure()).write_file(os.path.join(structDir,'POSCAR'))
+            with open(os.path.join(structDir,'matrix')) as mat_file:
+                json.dump(list(matrix),mat_file)
+
     print('Saving of %s successful.'%outdir)
 
 def _gen_vasp_inputs(SearchDir='vasp_run',functional='PBE', num_kpoints=25,add_vasp_settings=None, strain=((1.01,0,0),(0,1.05,0),(0,0,1.03)) ):
@@ -639,12 +648,8 @@ class StructureGenerator(MSONable):
 
         self.outdir =  outdir
         self._pool = []
-        if os.path.isfile('pool.mson'):
-            with open('pool.mson') as pool_file:
-                old_pool_d = json.load(pool_file)
-            for struct_d in old_pool_d:
-                self._pool.append(Structure.from_dict(struct_d))       
-
+        self._mat_pool = []
+      
         self.vasp_file = vasp_settings
         if os.path.isfile(vasp_settings):
             print("Applying VASP settings in {}.".format(vasp_settings))
@@ -675,7 +680,7 @@ class StructureGenerator(MSONable):
             with open('pool.temp') as temp_file:
                 _unique_structs_d = json.load(temp_file)
             _unique_structs = {}
-            _unique_structs = {comp:[Structure.from_dict(struct) for struct in _unique_structs_d[comp]]\
+            _unique_structs = {comp:[(Structure.from_dict(struct),matrix) for struct,matrix in _unique_structs_d[comp]]\
                                for comp in _unique_structs_d}
             with open('ro_axis.temp') as temp_file:
                 _ro_axis_strings = json.load(temp_file)
@@ -685,7 +690,7 @@ class StructureGenerator(MSONable):
                                                                TLst=[500, 1500, 10000],\
                                                                compaxis= self.comp_axis,outdir=self.outdir)
             with open('pool.temp','w') as temp_file:
-                _unique_structs_d = {comp:[struct.as_dict() for struct in _unique_structs[comp]] \
+                _unique_structs_d = {comp:[(struct.as_dict(),matrix) for (struct,matrix) in _unique_structs[comp]] \
                                      for comp in _unique_structs}
                 json.dump(_unique_structs_d,temp_file)
             with open('ro_axis.temp','w') as temp_file:
@@ -695,36 +700,41 @@ class StructureGenerator(MSONable):
 
         _unique_structs_buff = []
         for comp in _unique_structs:
-            _unique_structs_buff.extend([(comp,struct) for struct in _unique_structs[comp]])
-        _pool = [val for key,val in _unique_structs_buff]
+            _unique_structs_buff.extend([(comp,struct,matrix) for struct,matrix in _unique_structs[comp]])
+        _pool = [val for key,val,mat in _unique_structs_buff]
+        _mat_pool = [mat for key,val,mat in _unique_structs_buff]
 
         if len(self._pool)==0:
             n_init = min(3*len(_unique_structs),len(_pool))
             print("Initializing CE with {} chosen structures.".format(n_init))
-            selected_inds = ss.initialization(_pool,n_init=n_init)
+            selected_inds = ss.initialization(_pool,mat_pool=_matrix_pool,n_init=n_init)
         else:
             n_add = len(_unique_structs)
             print("Updating CE with {} chosen structures.".format(n_add))
-            selected_inds = ss.select_new(self._pool,_pool,n_probe=n_add)
+            selected_inds = ss.select_new(self._pool,_pool,\
+                                          old_mat_pool=self._mat_pool,\
+                                          new_mat_pool=_mat_pool,\
+                                          n_probe=n_add)
 
         self._pool.extend([_pool[idx] for idx in selected_inds])
+        self._mat_pool.extend([_matrix_pool[idx] for idx in selected_inds])
+
         #print('self._pool',self._pool)
         _unique_structs_selected = {}
         for idx in selected_inds:
             comp = _unique_structs_buff[idx][0]
             struct = _unique_structs_buff[idx][1]
+            mat = _unique_structs_buff[idx][2]
             if comp not in _unique_structs_selected:
                 _unique_structs_selected[comp]=[]
-            _unique_structs_selected[comp].append(struct)
+            _unique_structs_selected[comp].append((struct,mat))
 
         _write_mc_structs(_unique_structs_selected,_ro_axis_strings,outdir=self.outdir)
         self._write_vasp_inputs()
-        os.rename('pool.temp','pool.old')        
-        os.rename('ro_axis.temp','ro_axis.old')
         
-        with open('pool.mson','w') as pool_file:
-            pool_d = [struct.as_dict() for struct in self._pool]
-            json.dump(pool_d,pool_file)
+        self.as_file()
+        os.remove('pool.temp')
+        os.remove('ro_axis.temp')
 
     def _write_vasp_inputs(self):
         if self.vasp_settings:
@@ -752,7 +762,7 @@ class StructureGenerator(MSONable):
 # I/O interface for saving only, from_dict method not required
 ####
     @classmethod
-    def from_settings(cls,setting_file='generator.mson'):
+    def from_file(cls,setting_file='generator.mson'):
         if os.path.isfile(setting_file):
             with open(setting_file,'r') as fs:
                 settings = json.load(fs)
@@ -809,6 +819,11 @@ class StructureGenerator(MSONable):
 
         if 'sc_ro' in d:
             generator._sc_ro = d['sc_ro']
+        if 'pool' in d:
+            generator._pool = [Structure.from_dict(s_d) for s_d in d['pool']]
+        if 'mat_pool' in d:
+            generator._mat_pool = d['mat_pool']
+
         return generator
 
     def as_dict(self):
@@ -826,11 +841,13 @@ class StructureGenerator(MSONable):
                 'vasp_settings':self.vasp_file,\
                 #'n_select':self.n_select,\
                 'sc_ro':self.sc_ro,\
+                'pool':self._pool,\
+                'mat_pool':self._mat_pool,\
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
                }
     
-    def write_settings(self,settings_file='generator.mson'):
+    def as_file(self,settings_file='generator.mson'):
         print("Writing generator settings to {}".format(settings_file))
         with open(settings_file,'w') as fout:
             json.dump(self.as_dict(),fout)

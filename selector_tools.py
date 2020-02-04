@@ -147,20 +147,30 @@ class StructureSelector():
             self.N_eweci = 0
         self.solver = solver
         
-    def _get_femat(self,pool):
-        if self.N_eweci:
-            feature_matrix = np.array([self.ce.corr_from_structure(structure)[:-self.N_eweci] for structure in pool])
+    def _get_femat(self,pool,mat_pool=None):
+        if mat_pool is not None and len(mat_pool)=len(pool):
+            feature_matrix = []
+            for struct,mat in zip(pool,mat_pool):
+                cs = ce.supercell_from_matrix(mat)
+                if self.N_eweci:
+                    feature_matrix.append(cs.corr_from_structure(struct)[:-self.N_eweci])
+                else:
+                    feature_matrix.append(cs.corr_from_structure(struct))
+            feature_matrix=np.array(feature_matrix)
         else:
-            feature_matrix = np.array([self.ce.corr_from_structure(structure) for structure in pool])       
+            if self.N_eweci:
+                feature_matrix = np.array([self.ce.corr_from_structure(structure)[:-self.N_eweci] for structure in pool])
+            else:
+                feature_matrix = np.array([self.ce.corr_from_structure(structure) for structure in pool])       
         return feature_matrix        
 
-    def initialization(self, pool, n_init = 10):
+    def initialization(self, pool, mat_pool = None,n_init = 10):
         # Using only random selection for C and R is enough.
         """
             This method initialize a selection from pool.
         """
-
-        feature_matrix = self._get_femat(pool)
+        
+        feature_matrix = self._get_femat(pool, mat_pool=mat_pool)
 
         if self.solver == 'CUR':
             selected_ids = self.Nystrom_selection(feature_matrix, n_init= n_init)
@@ -171,15 +181,18 @@ class StructureSelector():
         
         return selected_ids
             
-    def select_new(self, old_pool, new_pool, n_probe = 1):
+    def select_new(self, old_pool, new_pool, old_mat_pool = None,\
+                   new_mat_pool = None, n_probe = 1):
         """
         Having an existing pool, select the best n_probe structures from a new pool.
         Does not deduplicate. Do that before selection!
         """
 
-        old_feature_matrix = self._get_femat(old_pool)
+        old_feature_matrix = self._get_femat(old_pool,\
+                                             mat_pool=old_mat_pool)
         #print('Old pool finished')
-        new_feature_matrix = self._get_femat(new_pool)
+        new_feature_matrix = self._get_femat(new_pool,\
+                                             mat_pool=new_mat_pool)
 
         d = old_feature_matrix.shape[1]
         domain = np.eye(d)

@@ -231,7 +231,7 @@ class CEJob(object):
     def _generator_call(self):
         print('#### Generator Call ####')
         if os.path.isfile(self.gen_file):
-            gen = StructureGenerator.from_settings(setting_file=self.gen_file)
+            gen = StructureGenerator.from_file(setting_file=self.gen_file)
         else:
             gen = StructureGenerator(prim_file = self.prim_file,\
                                      merge_sublats = self.merge_sublats,\
@@ -247,7 +247,7 @@ class CEJob(object):
 
         gen.generate_structures()
         if not os.path.isfile(self.gen_file):
-            gen.write_settings(settings_file=self.gen_file)
+            gen.as_file(settings_file=self.gen_file)
 
     def _run_calcs(self):
         """
