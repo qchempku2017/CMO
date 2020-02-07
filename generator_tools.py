@@ -247,7 +247,7 @@ def _get_mc_structs(SCLst,CE,ecis,merge_sublats=None,TLst=[500, 1500, 10000],com
                         unique = False
                         break
             if unique:
-                for ostruct in unique_structs[RO_string]:
+                for ostruct,matrix in unique_structs[RO_string]:
                     if sm.fit(struct, ostruct):
                         unique = False
                         break
@@ -335,7 +335,7 @@ def _write_mc_structs(unique_structs,ro_axis_strings,outdir='vasp_run'):
 
             if not os.path.isdir(structDir): os.mkdir(structDir)
             Poscar(struct.get_sorted_structure()).write_file(os.path.join(structDir,'POSCAR'))
-            with open(os.path.join(structDir,'matrix')) as mat_file:
+            with open(os.path.join(structDir,'matrix'),'w') as mat_file:
                 json.dump(list(matrix),mat_file)
 
     print('Saving of %s successful.'%outdir)
@@ -707,7 +707,7 @@ class StructureGenerator(MSONable):
         if len(self._pool)==0:
             n_init = min(3*len(_unique_structs),len(_pool))
             print("Initializing CE with {} chosen structures.".format(n_init))
-            selected_inds = ss.initialization(_pool,mat_pool=_matrix_pool,n_init=n_init)
+            selected_inds = ss.initialization(_pool,mat_pool=_mat_pool,n_init=n_init)
         else:
             n_add = len(_unique_structs)
             print("Updating CE with {} chosen structures.".format(n_add))
@@ -717,7 +717,7 @@ class StructureGenerator(MSONable):
                                           n_probe=n_add)
 
         self._pool.extend([_pool[idx] for idx in selected_inds])
-        self._mat_pool.extend([_matrix_pool[idx] for idx in selected_inds])
+        self._mat_pool.extend([_mat_pool[idx] for idx in selected_inds])
 
         #print('self._pool',self._pool)
         _unique_structs_selected = {}
@@ -841,8 +841,8 @@ class StructureGenerator(MSONable):
                 'vasp_settings':self.vasp_file,\
                 #'n_select':self.n_select,\
                 'sc_ro':self.sc_ro,\
-                'pool':self._pool,\
-                'mat_pool':self._mat_pool,\
+                'pool':[s.as_dict() for s in self._pool],\
+                'mat_pool':[list(m) for m in self._mat_pool],\
                 '@module':self.__class__.__module__,\
                 '@class':self.__class__.__name__\
                }

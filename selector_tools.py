@@ -148,10 +148,10 @@ class StructureSelector():
         self.solver = solver
         
     def _get_femat(self,pool,mat_pool=None):
-        if mat_pool is not None and len(mat_pool)=len(pool):
+        if mat_pool is not None and len(mat_pool)==len(pool):
             feature_matrix = []
             for struct,mat in zip(pool,mat_pool):
-                cs = ce.supercell_from_matrix(mat)
+                cs = self.ce.supercell_from_matrix(mat)
                 if self.N_eweci:
                     feature_matrix.append(cs.corr_from_structure(struct)[:-self.N_eweci])
                 else:

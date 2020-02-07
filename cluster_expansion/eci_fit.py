@@ -329,31 +329,36 @@ class EciGenerator(object):
         return [SpacegroupAnalyzer(s,symprec=1e-1).get_space_group_symbol() for s in self.structures]
 
     @classmethod
-    def unweighted(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,
-                   max_ewald=None, solver='cvxopt_l1'):
+    def unweighted(cls, cluster_expansion, structures, energies,supercell_matrices=None,\
+                   mu=None, max_dielectric=None, max_ewald=None, solver='cvxopt_l1'):
         #print("unweighted got {}".format(len(structures)))
         weights = np.ones(len(structures))
-        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,
-                   mu=mu, weights=weights, max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
+        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,\
+                   supercell_matrices = supercell_matrices,mu=mu, weights=weights,\
+                   max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
 
     @classmethod
-    def weight_by_e_above_hull(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,
-                               max_ewald=None, temperature=2000, solver='cvxopt_l1'):
+    def weight_by_e_above_hull(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,\
+                               supercell_matrices = None, max_ewald=None, temperature=2000,\
+                               solver='cvxopt_l1'):
         pd = _pd(structures, energies, cluster_expansion)
         e_above_hull = _energies_above_hull(pd, structures, energies)
         weights = np.exp(-e_above_hull / (0.00008617 * temperature))
 
-        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,
-                   mu=mu, weights=weights, max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
+        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,\
+                   supercell_matrices = supercell_matrices, mu=mu, weights=weights,\
+                   max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
 
     @classmethod
-    def weight_by_e_above_comp(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,
-                               max_ewald=None, temperature=2000, solver='cvxopt_l1'):
+    def weight_by_e_above_comp(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,\
+                               supercell_matrices = None, max_ewald=None, temperature=2000,\
+                               solver='cvxopt_l1'):
         e_above_comp = _energies_above_composition(structures, energies)
         weights = np.exp(-e_above_comp / (0.00008617 * temperature))
 
-        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,
-                   mu=mu, weights=weights, max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
+        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,\
+                   supercell_matrices = supercell_matrices, mu=mu, weights=weights,\
+                   max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
 
     @property
     def pd_input(self):
