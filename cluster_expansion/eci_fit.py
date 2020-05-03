@@ -166,7 +166,7 @@ class EciGenerator(object):
                     m = self.ce.supercell_matrix_from_structure(s)
                 sc = self.ce.supercell_from_matrix(m)
                 if fm_row is None:
-                    fm_row = sc.corr_from_structure(s)
+                    fm_row = self.ce.corr_from_structure(s)
             except Exception:
                 print('Unable to match {} with energy {} to supercell'.format(s.composition, e))
                 logging.debug('Unable to match {} with energy {} to supercell'.format(s.composition, e))
@@ -329,36 +329,31 @@ class EciGenerator(object):
         return [SpacegroupAnalyzer(s,symprec=1e-1).get_space_group_symbol() for s in self.structures]
 
     @classmethod
-    def unweighted(cls, cluster_expansion, structures, energies,supercell_matrices=None,\
-                   mu=None, max_dielectric=None, max_ewald=None, solver='cvxopt_l1'):
+    def unweighted(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,
+                   max_ewald=None, solver='cvxopt_l1'):
         #print("unweighted got {}".format(len(structures)))
         weights = np.ones(len(structures))
-        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,\
-                   supercell_matrices = supercell_matrices,mu=mu, weights=weights,\
-                   max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
+        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,
+                   mu=mu, weights=weights, max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
 
     @classmethod
-    def weight_by_e_above_hull(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,\
-                               supercell_matrices = None, max_ewald=None, temperature=2000,\
-                               solver='cvxopt_l1'):
+    def weight_by_e_above_hull(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,
+                               max_ewald=None, temperature=2000, solver='cvxopt_l1'):
         pd = _pd(structures, energies, cluster_expansion)
         e_above_hull = _energies_above_hull(pd, structures, energies)
         weights = np.exp(-e_above_hull / (0.00008617 * temperature))
 
-        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,\
-                   supercell_matrices = supercell_matrices, mu=mu, weights=weights,\
-                   max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
+        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,
+                   mu=mu, weights=weights, max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
 
     @classmethod
-    def weight_by_e_above_comp(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,\
-                               supercell_matrices = None, max_ewald=None, temperature=2000,\
-                               solver='cvxopt_l1'):
+    def weight_by_e_above_comp(cls, cluster_expansion, structures, energies, mu=None, max_dielectric=None,
+                               max_ewald=None, temperature=2000, solver='cvxopt_l1'):
         e_above_comp = _energies_above_composition(structures, energies)
         weights = np.exp(-e_above_comp / (0.00008617 * temperature))
 
-        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,\
-                   supercell_matrices = supercell_matrices, mu=mu, weights=weights,\
-                   max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
+        return cls(cluster_expansion=cluster_expansion, structures=structures, energies=energies,
+                   mu=mu, weights=weights, max_dielectric=max_dielectric, max_ewald=max_ewald, solver=solver)
 
     @property
     def pd_input(self):
@@ -391,9 +386,39 @@ class EciGenerator(object):
             xaxis='normalized_energies', yaxis='normalized_ce_energies'
             xaxis='e_above_hull_input', yaxis='normalized_error'
         """
-        plt.scatter(self.__getattribute__(xaxis), self.__getattribute__(yaxis))
-        plt.xlabel(xaxis)
-        plt.ylabel(yaxis)
+        textstr = '\n'.join((
+        r'$RMSE = %.3f eV/prim$'%(self.rmse,),
+        r'$CV Score = %.3f$'%(self.cv,),
+        r'$N_{strs} = %d$'%len(self.items)
+        ))
+        plt.figure(figsize=(8.0,6.0))
+        plt.scatter(self.__getattribute__(xaxis), self.__getattribute__(yaxis),label=textstr)
+        fs = 18
+        fst = 14
+        plt.tick_params(labelsize=fst)
+        plt.xlabel(xaxis,fontsize=fs)
+        plt.ylabel(yaxis,fontsize=fs)
+        plt.legend(fontsize=fs)
+        #props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+        #plt.title(textstr,fontsize=fs)
+
+        return plt
+    
+    def get_eciplot(self):
+        plt.close()
+        fs = 18
+        fst = 14
+        plt.figure(figsize=(8.0,6.0))
+        xs = np.arange(0,len(self.ecis))+0.5
+        plt.bar(xs,self.ecis,width=1.0)
+        if self.ce.use_ewald and not self.ce.use_inv_r:
+            plt.bar(xs[-1:],self.ecis[-1:],width=1.0,color='r',label='Ewald eci')
+        plt.tick_params(labelsize=fst)
+        plt.xlabel('Cluster indices',fontsize=fs)
+        plt.ylabel('ECIs eV/prim',fontsize=fs)
+        if self.ce_use_ewald and not self.ce_use_inv_r:
+            plt.legend(fontsize=fs)
+
         return plt
 
     def get_optimum_mu(self, A, f, weights, k=5, min_mu=-1, max_mu=6):
